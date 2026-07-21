@@ -13,7 +13,7 @@ pub struct TargetWindow {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum ContextSourceType {
     SelectedText,
     WebPage,
@@ -197,5 +197,17 @@ mod tests {
         .unwrap();
         assert_eq!(value["code"], "rate_limited");
         assert_eq!(value["message"], "try later");
+    }
+
+    #[test]
+    fn context_sources_use_frontend_wire_names() {
+        assert_eq!(
+            serde_json::to_string(&ContextSourceType::SelectedText).unwrap(),
+            "\"selectedText\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ContextSourceType::ActiveWindowText).unwrap(),
+            "\"activeWindowText\""
+        );
     }
 }

@@ -11,7 +11,18 @@
     type ResponseEvent,
     type ResponseState,
   } from './events';
-  import { CONTEXT_OPTIONS, contextUnavailableReason, type AssistantBootstrap } from './model';
+  import {
+    CONTEXT_OPTIONS,
+    contextResultNote,
+    contextSourceLabel,
+    contextUnavailableReason,
+    type AssistantBootstrap,
+    type AssistantShownPayload,
+    type ContextCollectionResult,
+    type ContextSourceId,
+    type SubmitModelRequestResult,
+    type TargetWindow,
+  } from './model';
 
   let prompt = '';
   let responseState: ResponseState = initialResponseState();
@@ -25,8 +36,12 @@
   let activeModelProfileId = '';
   let conversationId = createId();
   let bootstrapError = '';
+  let contextWarning = '';
+  let activeTarget: TargetWindow | null = null;
+  let contextResults: ContextCollectionResult[] = [];
   let textarea: HTMLTextAreaElement;
   const ignoredRequestIds = new SvelteSet<string>();
+  const selectedContextSources = new SvelteSet<ContextSourceId>();
 
   onMount(() => {
     const unlistenResponse = listen<ResponseEvent>('model-response', ({ payload }) => {
@@ -50,7 +65,11 @@
         stopping = false;
       }
     });
-    const unlistenShown = listen('assistant-shown', () => {
+    const unlistenShown = listen<AssistantShownPayload>('assistant-shown', ({ payload }) => {
+      activeTarget = payload.target;
+      contextWarning = payload.warning ?? '';
+      contextResults = [];
+      selectedContextSources.clear();
       window.setTimeout(() => textarea?.focus(), 0);
     });
 
@@ -100,16 +119,28 @@
     if (!value || pending || !activeModelProfileId) return;
 
     archiveCurrentResponse();
-    messages = [...messages, { id: createId(), role: 'user', content: value }];
+    const userMessageId = createId();
+    messages = [...messages, { id: userMessageId, role: 'user', content: value }];
     prompt = '';
     pending = true;
+    contextResults = [];
     responseState = initialResponseState();
     try {
-      const requestId = await invoke<string>('submit_model_request', {
+      const result = await invoke<SubmitModelRequestResult>('submit_model_request', {
         conversationId,
         messages: buildModelMessages(messages),
+        contextSources: [...selectedContextSources],
       });
-      if (!responseState.requestId) responseState = { ...responseState, requestId };
+      contextResults = result.contextResults;
+      selectedContextSources.clear();
+      const note = contextResultNote(result.contextResults);
+      if (note) {
+        messages = messages.map((message) =>
+          message.id === userMessageId ? { ...message, note } : message,
+        );
+      }
+      if (!responseState.requestId)
+        responseState = { ...responseState, requestId: result.requestId };
     } catch (cause) {
       pending = false;
       responseState = {
@@ -146,6 +177,8 @@
     }
     messages = [];
     responseState = initialResponseState();
+    contextResults = [];
+    selectedContextSources.clear();
     prompt = '';
     conversationId = createId();
     window.setTimeout(() => textarea?.focus(), 0);
@@ -194,6 +227,18 @@
       event.preventDefault();
       void submit();
     }
+  }
+
+  function setContextSelected(source: ContextSourceId, selected: boolean) {
+    if (selected) selectedContextSources.add(source);
+    else selectedContextSources.delete(source);
+  }
+
+  function targetLabel() {
+    if (!activeTarget) return '未记录到外部窗口';
+    return (
+      activeTarget.title || activeTarget.applicationName || activeTarget.processName || '外部窗口'
+    );
   }
 
   function createId() {
@@ -245,22 +290,34 @@
         aria-expanded={contextOpen}
         onclick={() => (contextOpen = !contextOpen)}
       >
-        上下文 <span>0</span>
+        上下文 <span>{selectedContextSources.size}</span>
       </button>
       {#if contextOpen && activeProfile()}
         <div class="context-menu">
           <div class="context-heading">
             <strong>添加本次上下文</strong>
-            <small>当前阶段尚未启用采集</small>
+            <small title={targetLabel()}>目标：{targetLabel()}</small>
           </div>
           {#each CONTEXT_OPTIONS as option (option.id)}
+            {@const unavailable = contextUnavailableReason(
+              option,
+              activeProfile()!.capabilities,
+              activeTarget,
+            )}
             <label
               class="context-option"
-              title={contextUnavailableReason(option, activeProfile()!.capabilities)}
+              class:available={!unavailable}
+              title={unavailable ?? '仅在本次发送时采集'}
             >
-              <input type="checkbox" disabled />
+              <input
+                type="checkbox"
+                checked={selectedContextSources.has(option.id)}
+                disabled={Boolean(unavailable) || pending}
+                onchange={(event) =>
+                  setContextSelected(option.id, (event.currentTarget as HTMLInputElement).checked)}
+              />
               <span>{option.label}</span>
-              <small>{contextUnavailableReason(option, activeProfile()!.capabilities)}</small>
+              <small>{unavailable ?? '发送时读取，仅用于本次消息'}</small>
             </label>
           {/each}
         </div>
@@ -273,14 +330,28 @@
     {#if bootstrapError}
       <p class="system-error">模型信息加载失败：{bootstrapError}</p>
     {/if}
+    {#if contextWarning}
+      <p class="system-status">窗口上下文暂不可用：{contextWarning}</p>
+    {/if}
+    {#if contextResults.length > 0}
+      <div class="context-results">
+        {#each contextResults as result (result.source)}
+          <small class:failed={result.status === 'failed'}>
+            {contextSourceLabel(result.source)}：{result.status === 'added'
+              ? `已添加 ${result.characterCount} 字${result.truncated ? '（已截断）' : ''}`
+              : result.message}
+          </small>
+        {/each}
+      </div>
+    {/if}
 
     {#if messages.length === 0 && !responseState.content && responseState.status !== 'failed'}
       <div class="empty">
         <span>✦</span>
         <p>
           {activeProfile()?.providerType === 'mock'
-            ? '当前使用本地 Mock Provider，不会发送网络请求或读取电脑内容。'
-            : `当前使用 ${activeProfile()?.name ?? '所选模型'}；仅发送本会话文字历史，不读取电脑内容。`}
+            ? '当前使用本地 Mock Provider；仅在你选择上下文并发送时读取对应文字。'
+            : `当前使用 ${activeProfile()?.name ?? '所选模型'}；仅在你选择上下文并发送时读取对应文字。`}
         </p>
       </div>
     {/if}
@@ -514,6 +585,11 @@
     opacity: 0.62;
   }
 
+  .context-option.available {
+    opacity: 1;
+    cursor: pointer;
+  }
+
   .context-option input {
     grid-row: 1 / 3;
   }
@@ -610,6 +686,25 @@
     margin: 5px;
     color: #93a7c0;
     font-size: 11px;
+  }
+
+  .context-results {
+    display: grid;
+    margin: 0 0 9px;
+    padding: 7px 9px;
+    gap: 3px;
+    border-radius: 9px;
+    color: #93a7c0;
+    background: rgb(126 226 255 / 6%);
+  }
+
+  .context-results small {
+    font-size: 9px;
+    line-height: 1.4;
+  }
+
+  .context-results small.failed {
+    color: #ffaeae;
   }
 
   .composer {

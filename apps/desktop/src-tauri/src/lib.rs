@@ -9,8 +9,14 @@ use deskaide_ai_provider::{
     MockProvider, ModelError, ModelProvider, OpenAiCompatibleProvider,
     openai_compatible::{OpenAiCompatibleConfig, SecretString},
 };
-use deskaide_assistant_core::{GenerationOptions, ModelMessage, ModelRequest, ResponseEvent};
-use deskaide_context_core::PlatformIntegration;
+use deskaide_assistant_core::{
+    ContextPayload, ContextSourceType, GenerationOptions, ModelMessage, ModelRequest,
+    ResponseEvent, TargetWindow,
+};
+use deskaide_context_core::{
+    ActiveWindowTextContextProvider, ContextError, ContextProvider, ContextRequest,
+    PlatformIntegration, SelectedTextContextProvider,
+};
 use model_profiles::{
     AssistantBootstrap, ModelProfile, ModelProfileInput, ModelProfileView, ProfileCollection,
     ProviderType, SavedProfiles,
@@ -38,12 +44,17 @@ const COMPACT_ASSISTANT_WIDTH: f64 = 420.0;
 const COMPACT_ASSISTANT_HEIGHT: f64 = 460.0;
 const EXPANDED_ASSISTANT_WIDTH: f64 = 720.0;
 const EXPANDED_ASSISTANT_HEIGHT: f64 = 720.0;
+const MAX_CONTEXT_CHARS: usize = 64_000;
+const DEFAULT_CONTEXT_CHARS: usize = 32_000;
 
 struct AppState {
     profiles: Mutex<ProfileCollection>,
     credentials: Arc<dyn CredentialStore>,
     #[allow(dead_code)]
     platform: Arc<dyn PlatformIntegration>,
+    selected_text_provider: Arc<dyn ContextProvider>,
+    active_window_text_provider: Arc<dyn ContextProvider>,
+    context_target: Mutex<Option<TargetWindow>>,
     movement: Mutex<MovementState>,
     active_request: Arc<Mutex<Option<ActiveRequest>>>,
 }
@@ -59,6 +70,38 @@ struct MovementState {
     generation: u64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AssistantShownPayload {
+    target: Option<TargetWindow>,
+    warning: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+enum ContextCollectionStatus {
+    Added,
+    Unavailable,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct ContextCollectionResult {
+    source: ContextSourceType,
+    status: ContextCollectionStatus,
+    character_count: usize,
+    truncated: bool,
+    message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SubmitModelRequestResult {
+    request_id: String,
+    context_results: Vec<ContextCollectionResult>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SavedAvatarPosition {
@@ -70,10 +113,18 @@ struct SavedAvatarPosition {
 impl AppState {
     #[cfg(windows)]
     fn new() -> Self {
+        let platform: Arc<dyn PlatformIntegration> = Arc::new(WindowsPlatformIntegration::new());
         Self {
             profiles: Mutex::new(ProfileCollection::default()),
             credentials: Arc::new(SystemCredentialStore::new()),
-            platform: Arc::new(WindowsPlatformIntegration::new()),
+            selected_text_provider: Arc::new(SelectedTextContextProvider::new(Arc::clone(
+                &platform,
+            ))),
+            active_window_text_provider: Arc::new(ActiveWindowTextContextProvider::new(
+                Arc::clone(&platform),
+            )),
+            platform,
+            context_target: Mutex::new(None),
             movement: Mutex::new(MovementState::default()),
             active_request: Arc::new(Mutex::new(None)),
         }
@@ -232,15 +283,34 @@ async fn test_model_connection(
 }
 
 #[tauri::command]
-fn toggle_assistant(app: AppHandle) -> Result<(), String> {
+async fn toggle_assistant(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let assistant = get_window(&app, ASSISTANT_LABEL)?;
     if assistant.is_visible().map_err(display_error)? {
         assistant.hide().map_err(display_error)
     } else {
+        let (target, warning) = match state.platform.get_last_active_window().await {
+            Ok(target) => {
+                *state
+                    .context_target
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner()) = Some(target.clone());
+                (Some(target), None)
+            }
+            Err(error) => {
+                let target = state
+                    .context_target
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .clone();
+                (target, Some(error.to_string()))
+            }
+        };
         position_assistant(&app)?;
         assistant.show().map_err(display_error)?;
         assistant.set_focus().map_err(display_error)?;
-        assistant.emit("assistant-shown", ()).map_err(display_error)
+        assistant
+            .emit("assistant-shown", AssistantShownPayload { target, warning })
+            .map_err(display_error)
     }
 }
 
@@ -252,12 +322,13 @@ fn hide_assistant(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn submit_model_request(
+async fn submit_model_request(
     app: AppHandle,
     state: State<'_, AppState>,
     conversation_id: String,
     messages: Vec<ModelMessage>,
-) -> Result<String, String> {
+    context_sources: Vec<ContextSourceType>,
+) -> Result<SubmitModelRequestResult, String> {
     if !messages.iter().any(|message| {
         matches!(message.role, deskaide_assistant_core::MessageRole::User)
             && message.content.iter().any(|block| {
@@ -277,6 +348,19 @@ fn submit_model_request(
     };
     let provider = provider_for_profile(&profile, state.credentials.as_ref())
         .map_err(|error| error.to_string())?;
+    let target = state
+        .context_target
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .clone();
+    let (context, context_results) = collect_context(
+        &state,
+        target.as_ref(),
+        &context_sources,
+        profile.capabilities.supports_text,
+        context_char_budget(profile.capabilities.context_window),
+    )
+    .await;
 
     let request_id = Uuid::new_v4().to_string();
     let request = ModelRequest {
@@ -285,7 +369,7 @@ fn submit_model_request(
         conversation_id,
         system_prompt: Some("You are DeskAide, a helpful desktop assistant.".to_owned()),
         messages,
-        context: Vec::new(),
+        context,
         generation_options: GenerationOptions {
             max_output_tokens: None,
             temperature: Some(0.7),
@@ -354,7 +438,194 @@ fn submit_model_request(
     }
     let _ = start_sender.send(());
 
-    Ok(request_id)
+    Ok(SubmitModelRequestResult {
+        request_id,
+        context_results,
+    })
+}
+
+async fn collect_context(
+    state: &AppState,
+    target: Option<&TargetWindow>,
+    requested: &[ContextSourceType],
+    supports_text: bool,
+    mut remaining_chars: usize,
+) -> (Vec<ContextPayload>, Vec<ContextCollectionResult>) {
+    let mut payloads = Vec::new();
+    let mut results = Vec::new();
+    let mut ordered_sources = Vec::new();
+    for source in [
+        ContextSourceType::SelectedText,
+        ContextSourceType::ActiveWindowText,
+    ] {
+        if requested.contains(&source) {
+            ordered_sources.push(source);
+        }
+    }
+    for source in requested {
+        if !ordered_sources.contains(source) {
+            ordered_sources.push(source.clone());
+        }
+    }
+
+    for source in ordered_sources {
+        if matches!(
+            source,
+            ContextSourceType::SelectedText | ContextSourceType::ActiveWindowText
+        ) && !supports_text
+        {
+            results.push(context_result(
+                source,
+                ContextCollectionStatus::Unavailable,
+                0,
+                false,
+                "当前模型不支持文字上下文",
+            ));
+            continue;
+        }
+        let Some(target) = target else {
+            results.push(context_result(
+                source,
+                ContextCollectionStatus::Unavailable,
+                0,
+                false,
+                "未记录到本次激活前的外部窗口",
+            ));
+            continue;
+        };
+        let provider = match source {
+            ContextSourceType::SelectedText => Some(Arc::clone(&state.selected_text_provider)),
+            ContextSourceType::ActiveWindowText => {
+                Some(Arc::clone(&state.active_window_text_provider))
+            }
+            _ => None,
+        };
+        let Some(provider) = provider else {
+            results.push(context_result(
+                source,
+                ContextCollectionStatus::Unavailable,
+                0,
+                false,
+                "该上下文类型尚未实现",
+            ));
+            continue;
+        };
+        if remaining_chars == 0 {
+            results.push(context_result(
+                source,
+                ContextCollectionStatus::Unavailable,
+                0,
+                true,
+                "本次请求的上下文预算已用完",
+            ));
+            continue;
+        }
+
+        let request = ContextRequest {
+            target: target.clone(),
+            sources: vec![source.clone()],
+        };
+        match provider.collect(&request).await {
+            Ok(mut payload) => {
+                let text = match source {
+                    ContextSourceType::SelectedText => payload.selected_text.take(),
+                    ContextSourceType::ActiveWindowText => payload.main_text.take(),
+                    _ => None,
+                };
+                let Some(text) = text else {
+                    results.push(context_result(
+                        source,
+                        ContextCollectionStatus::Unavailable,
+                        0,
+                        false,
+                        "未获取到可用文字",
+                    ));
+                    continue;
+                };
+                let (text, truncated) = truncate_chars(&text, remaining_chars);
+                let character_count = text.chars().count();
+                remaining_chars = remaining_chars.saturating_sub(character_count);
+                if truncated {
+                    payload
+                        .warnings
+                        .push("文字已按当前模型的上下文预算截断".to_owned());
+                }
+                match source {
+                    ContextSourceType::SelectedText => payload.selected_text = Some(text),
+                    ContextSourceType::ActiveWindowText => payload.main_text = Some(text),
+                    _ => {}
+                }
+                results.push(context_result(
+                    source,
+                    ContextCollectionStatus::Added,
+                    character_count,
+                    truncated,
+                    if truncated {
+                        "已添加，内容已按模型预算截断"
+                    } else {
+                        "已添加到本次提问"
+                    },
+                ));
+                payloads.push(payload);
+            }
+            Err(error) => {
+                let (status, message) = context_error_result(&error);
+                results.push(context_result(source, status, 0, false, message));
+            }
+        }
+    }
+
+    (payloads, results)
+}
+
+fn context_char_budget(context_window: Option<u64>) -> usize {
+    context_window
+        .map(|tokens| usize::try_from(tokens / 2).unwrap_or(MAX_CONTEXT_CHARS))
+        .unwrap_or(DEFAULT_CONTEXT_CHARS)
+        .clamp(1, MAX_CONTEXT_CHARS)
+}
+
+fn truncate_chars(text: &str, max_chars: usize) -> (String, bool) {
+    let mut chars = text.chars();
+    let result: String = chars.by_ref().take(max_chars).collect();
+    let truncated = chars.next().is_some();
+    (result, truncated)
+}
+
+fn context_result(
+    source: ContextSourceType,
+    status: ContextCollectionStatus,
+    character_count: usize,
+    truncated: bool,
+    message: impl Into<String>,
+) -> ContextCollectionResult {
+    ContextCollectionResult {
+        source,
+        status,
+        character_count,
+        truncated,
+        message: message.into(),
+    }
+}
+
+fn context_error_result(error: &ContextError) -> (ContextCollectionStatus, String) {
+    match error {
+        ContextError::Unsupported { .. } => (
+            ContextCollectionStatus::Unavailable,
+            "该上下文类型在当前平台不可用".to_owned(),
+        ),
+        ContextError::Unavailable { reason, .. } => {
+            (ContextCollectionStatus::Unavailable, reason.clone())
+        }
+        ContextError::Timeout { .. } => (
+            ContextCollectionStatus::Failed,
+            "采集超过 3 秒，已跳过该上下文".to_owned(),
+        ),
+        ContextError::Collection(message) => (
+            ContextCollectionStatus::Failed,
+            format!("采集失败：{message}"),
+        ),
+    }
 }
 
 fn provider_for_profile(
@@ -641,9 +912,14 @@ pub fn run() {
                 .with_handler(move |app, triggered, event| {
                     if triggered == &handler_shortcut
                         && event.state() == ShortcutState::Pressed
-                        && let Err(error) = toggle_assistant(app.clone())
                     {
-                        eprintln!("failed to toggle assistant from shortcut: {error}");
+                        let app = app.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let state = app.state::<AppState>();
+                            if let Err(error) = toggle_assistant(app.clone(), state).await {
+                                eprintln!("failed to toggle assistant from shortcut: {error}");
+                            }
+                        });
                     }
                 })
                 .build(),
@@ -760,5 +1036,60 @@ mod tests {
         assert!(with_key.model_profiles[1].has_api_key);
         let json = serde_json::to_string(&with_key).unwrap();
         assert!(!json.contains("never-return-this"));
+    }
+
+    #[test]
+    fn context_budget_uses_half_the_model_window_with_a_hard_cap() {
+        assert_eq!(context_char_budget(Some(4_096)), 2_048);
+        assert_eq!(context_char_budget(None), DEFAULT_CONTEXT_CHARS);
+        assert_eq!(context_char_budget(Some(1_000_000)), MAX_CONTEXT_CHARS);
+        assert_eq!(context_char_budget(Some(1)), 1);
+    }
+
+    #[test]
+    fn context_truncation_preserves_unicode_boundaries() {
+        assert_eq!(truncate_chars("助手ABC", 3), ("助手A".to_owned(), true));
+        assert_eq!(truncate_chars("助手", 3), ("助手".to_owned(), false));
+    }
+
+    #[test]
+    fn context_results_use_the_frontend_wire_format() {
+        let result = SubmitModelRequestResult {
+            request_id: "request-1".to_owned(),
+            context_results: vec![context_result(
+                ContextSourceType::SelectedText,
+                ContextCollectionStatus::Added,
+                12,
+                false,
+                "added",
+            )],
+        };
+        let value = serde_json::to_value(result).unwrap();
+        assert_eq!(value["requestId"], "request-1");
+        assert_eq!(value["contextResults"][0]["source"], "selectedText");
+        assert_eq!(value["contextResults"][0]["status"], "added");
+        assert_eq!(value["contextResults"][0]["characterCount"], 12);
+    }
+
+    #[test]
+    fn context_errors_map_to_non_blocking_user_statuses() {
+        let unavailable = ContextError::Unavailable {
+            capability: "selected_text",
+            reason: "没有选中文字".to_owned(),
+        };
+        let timeout = ContextError::Timeout {
+            capability: "active_window_text",
+        };
+        assert_eq!(
+            context_error_result(&unavailable),
+            (
+                ContextCollectionStatus::Unavailable,
+                "没有选中文字".to_owned()
+            )
+        );
+        assert_eq!(
+            context_error_result(&timeout).0,
+            ContextCollectionStatus::Failed
+        );
     }
 }

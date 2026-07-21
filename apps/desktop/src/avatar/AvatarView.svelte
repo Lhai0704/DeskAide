@@ -16,7 +16,7 @@
     try {
       manifest = await loadAvatarManifest();
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : 'Avatar Pack 加载失败';
+      error = cause instanceof Error ? cause.message : '助手形象资源包加载失败';
     }
   });
 

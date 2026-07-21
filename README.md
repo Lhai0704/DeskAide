@@ -1,21 +1,24 @@
 # DeskAide
 
-DeskAide 是一个常驻桌面的电子 AI 助手入口。当前版本提供 Windows 透明助手形象、可拖动双窗口、OpenAI-Compatible 文字模型和可替换的 Avatar Pack。
+DeskAide 是一个常驻桌面的电子 AI 助手入口。当前版本提供 Windows 透明助手形象、可拖动双窗口、OpenAI-Compatible 文字模型和可替换的助手形象资源包。
 
-> 只有用户主动发送时，当前会话的文字历史才会提交给所选模型。当前版本不会读取屏幕、活动窗口、剪贴板或其他应用内容。
+> 只有用户主动勾选文字上下文并发送时，DeskAide 才会读取本次激活前记录的外部窗口。当前版本不会读取屏幕、剪贴板或后台持续采集其他应用内容。
 
 ## 当前功能
 
-- 透明、无边框、始终置顶的 Avatar Window
+- 透明、无边框、始终置顶的助手形象窗口
 - 单击形象或按 `Ctrl + Shift + Space` 打开 Assistant Window
-- 多显示器工作区定位和 Avatar 位置持久化
-- 可替换的静态 Avatar Pack Manifest
+- 多显示器工作区定位和助手形象位置持久化
+- 可替换的静态助手形象资源包 Manifest
 - OpenAI-Compatible `/v1/chat/completions` 流式与非流式响应
 - 多个模型 Profile、默认模型、模型切换和连接测试
 - Windows Credential Manager 中按 Profile 隔离的 API Key
 - 保留本地 Mock Provider，离线时仍可运行
 - 真正发送多轮文字历史，支持新建会话、停止生成和 Assistant 展开/收起
 - 从 Rust 读取模型能力，并明确禁用尚不可用的上下文选项
+- 记录 Assistant 激活前的 Windows 外部活动窗口
+- 通过 UI Automation 尽力获取当前选中文字和窗口可访问文字
+- 按模型上下文窗口限制文字长度，采集失败时继续普通提问
 - `PlatformIntegration`、`ContextProvider` 和 `ModelProvider` 扩展边界
 
 ## 环境要求
@@ -35,7 +38,7 @@ npm install
 npm run tauri --workspace @deskaide/desktop -- dev
 ```
 
-首次启动时只显示电子管家形象。拖动可改变位置；单击或按 `Ctrl + Shift + Space` 打开问答面板。
+首次启动时只显示助手形象。拖动可改变位置；单击或按 `Ctrl + Shift + Space` 打开问答面板。
 
 展开 Assistant 后打开“模型设置”，新建 OpenAI-Compatible Profile。Base URL 可以填写 Provider 根路径（例如 `https://api.longcat.chat/openai`）或以 `/v1` 结尾的 API 地址；API Key 只写入系统凭据库。保存后再由用户主动点击“测试连接”。
 
@@ -78,23 +81,25 @@ docs/                      架构、资源格式和已知限制
 
 ## 隐私边界
 
-- 当前阶段完全不采集电脑上下文。
+- 激活时只记录外部窗口元数据和 UI Automation 元素引用，不读取其文字。
+- 只有用户勾选“当前选中文字”或“当前窗口文字”并发送后，才读取对应文字。
 - API Key 不进入 Tauri Store，后端也不通过 IPC 返回明文；前端只能读取“已设置/未设置”。
 - `Authorization`、Cookie、Token、Secret 等敏感自定义 Header 会被拒绝。
 - 未实现 OCR、持续截图、活动历史、语音、Agent 或电脑操作。
 - Mock Provider 不发送网络请求。
-- 未来只有用户明确选择上下文时才允许采集对应内容。
+- 上下文只加入本次模型请求，不会自动加入后续对话轮次。
 
 ## 已知限制
 
-- 选中文字、窗口文字、截图和浏览器扩展尚未实现，调用平台接口会返回明确的 `Unsupported`。
-- 快捷键可能被其他应用占用；注册失败不会阻止应用启动，仍可单击 Avatar。
+- UI Automation 取决于目标应用的辅助功能实现；选中文字和窗口文字可能只返回部分内容或不可用。
+- 截图和浏览器扩展尚未实现，调用对应平台接口会返回明确的 `Unsupported`。
+- 快捷键可能被其他应用占用；注册失败不会阻止应用启动，仍可单击助手形象。
 - 会话和消息只保存在当前 Assistant 窗口内存中，重启后不会恢复。
 - 本阶段只有 Windows Credential Manager 具体实现；macOS Keychain 和 Linux Secret Service 只保留后端抽象。
 - 429 会显示明确的限流错误，但当前不自动重试，避免在用户不知情时重复请求或计费。
 - “测试连接”使用 OpenAI-Compatible 模型详情端点；不实现该标准端点的 Provider 可能无法使用连接测试，但不影响其对话接口。
-- 上下文选择器已按模型能力显示禁用原因，但采集功能尚未接入，不能勾选任何上下文。
-- Avatar 透明区域仍属于窗口命中区域；逐像素鼠标穿透不在第一阶段范围内。
+- 图片上下文仍按模型能力显示禁用原因，但图片采集尚未接入。
+- 助手形象透明区域仍属于窗口命中区域；逐像素鼠标穿透不在当前范围内。
 
 ## 许可证
 

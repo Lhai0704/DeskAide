@@ -17,15 +17,17 @@ desktop-svelte → 仅通过 Tauri IPC 和事件访问后端
 
 ## 窗口协调
 
-Tauri 在启动时创建 `avatar` 和 `assistant` 两个窗口。Assistant 默认隐藏。单击 Avatar 和全局快捷键最终调用同一个 Rust `toggle_assistant` 命令。
+Tauri 在启动时创建 `avatar` 和 `assistant` 两个窗口。Assistant 默认隐藏，助手形象窗口不可获取焦点。单击助手形象和全局快捷键最终调用同一个异步 Rust `toggle_assistant` 命令。
 
-Rust 根据 Avatar 所在显示器的物理工作区计算 Assistant 位置，顺序为右、左、下、上，最后执行边界限制。Avatar 移动时 Assistant 跟随；停止移动 220ms 后将位置写入 Tauri Store。
+打开 Assistant 前，Rust 先记录外部前台窗口元数据和 UI Automation 焦点元素，然后再显示并聚焦 Assistant。Rust 根据助手形象所在显示器的物理工作区计算 Assistant 位置，顺序为右、左、下、上，最后执行边界限制。助手形象移动时 Assistant 跟随；停止移动 220ms 后将位置写入 Tauri Store。
 
 ## 模型请求数据流
 
 ```text
 Assistant 输入
   → submit_model_request（完整内存会话历史）
+  → 按用户本次选择采集文字上下文
+  → 按模型上下文窗口限制长度
   → 读取当前 ModelProfile
   → 按 Profile 从 CredentialStore 取得 API Key
   → 构造 MockProvider 或 OpenAiCompatibleProvider
@@ -36,7 +38,7 @@ Assistant 输入
 
 核心层的事件发送器不依赖 Tauri，因此 Provider、测试和其他前端都可复用同一接口。真实 HTTP 请求由可取消的 Tauri 异步任务持有；停止生成会 abort 任务并释放响应流。
 
-`OpenAiCompatibleProvider` 把以 `/v1` 结尾和 Provider 根路径两类 Base URL 统一为 `/v1/chat/completions`。请求支持 system/user/assistant、多轮文字、temperature 和 max_tokens。响应层分别处理标准 JSON 与增量 SSE，并把 HTTP、网络、超时、格式和流中断映射为稳定错误代码。
+`OpenAiCompatibleProvider` 把以 `/v1` 结尾和 Provider 根路径两类 Base URL 统一为 `/v1/chat/completions`。请求支持 system/user/assistant、多轮文字、temperature 和 max_tokens。用户授权的桌面文字以明确标记的不可信引用区块加入当前用户消息，不进入后续会话历史。响应层分别处理标准 JSON 与增量 SSE，并把 HTTP、网络、超时、格式和流中断映射为稳定错误代码。
 
 ## Profile 与凭据边界
 
@@ -46,12 +48,12 @@ Assistant 输入
 
 ## Assistant 交互壳层
 
-Rust 通过 `get_assistant_bootstrap` 暴露当前模型 Profile 和 `ModelCapabilities`，Svelte 根据能力展示上下文项。当前上下文采集尚未实现，所以文字项显示“后续阶段接入”，图片项在 Mock 模型下显示“当前模型不支持图片”，不会伪造可用状态。
+Rust 通过 `get_assistant_bootstrap` 暴露当前模型 Profile 和 `ModelCapabilities`，通过 `assistant-shown` 暴露本次外部目标。Svelte 只在目标存在时启用选中文字和窗口文字，并展示每项的成功、不可用、失败或截断结果；网页和图片项继续显示明确的未实现原因。
 
 每次请求都注册唯一请求 ID 和可取消任务句柄。`stop_generation` 仅取消匹配的活动请求，并发送 `Cancelled` 事件；前端 reducer 会忽略其他请求的迟到事件。会话目前只存在于 Assistant 窗口内存中，但每次请求会按原角色顺序发送当前完整文字历史。
 
-Assistant 支持 420×460 的紧凑模式和最大 720×720 的展开模式。Rust 按当前 DPI 转换尺寸、限制到 Avatar 所在显示器工作区，并复用窗口定位算法重新靠近 Avatar。
+Assistant 支持 420×460 的紧凑模式和最大 720×720 的展开模式。Rust 按当前 DPI 转换尺寸、限制到助手形象所在显示器工作区，并复用窗口定位算法重新靠近助手形象。
 
 ## 平台扩展
 
-当前只有 `platform-windows`，且上下文方法明确返回 `Unsupported`。未来新增平台时创建独立 crate，实现 `PlatformIntegration`，并在各自构建目标的组合入口注入。
+当前只有 `platform-windows` 实现外部窗口追踪、选中文字和可访问文字。UI Automation 在专用 COM 工作线程执行并设置三秒超时；截图方法仍明确返回 `Unsupported`。未来新增平台时创建独立 crate，实现 `PlatformIntegration`，并在各自构建目标的组合入口注入。
