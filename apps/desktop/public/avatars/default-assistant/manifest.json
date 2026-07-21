@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "default-assistant",
+  "name": "Default Electronic Butler",
+  "version": "1.0.0",
+  "renderer": "static",
+  "defaultWidth": 160,
+  "defaultHeight": 160,
+  "states": {
+    "idle": {
+      "asset": "idle.png",
+      "alt": "DeskAide 电子管家"
+    },
+    "activated": {
+      "asset": "activated.png",
+      "alt": "DeskAide 电子管家已激活"
+    }
+  }
+}

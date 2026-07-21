@@ -1,0 +1,14 @@
+[package]
+name = "deskaide-platform-windows"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+deskaide-assistant-core = { path = "../assistant-core" }
+deskaide-context-core = { path = "../context-core" }
+
+[dev-dependencies]
+tokio.workspace = true

@@ -1,0 +1,42 @@
+:root {
+  font-family:
+    Inter,
+    'Segoe UI',
+    'Microsoft YaHei',
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
+  color: #eaf2ff;
+  background: transparent;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+button,
+textarea {
+  font: inherit;
+}
+
+.unknown-window {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  color: #111827;
+  background: #fff;
+}

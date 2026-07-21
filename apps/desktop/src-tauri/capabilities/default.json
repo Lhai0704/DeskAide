@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop-capability",
+  "description": "Minimal permissions for DeskAide desktop windows",
+  "windows": ["avatar", "assistant"],
+  "permissions": ["core:default", "core:window:allow-start-dragging"]
+}
