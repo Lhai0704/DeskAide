@@ -147,7 +147,11 @@ pub enum ResponseEvent {
     },
     Failed {
         request_id: String,
+        code: String,
         message: String,
+    },
+    Cancelled {
+        request_id: String,
     },
 }
 
@@ -170,5 +174,28 @@ mod tests {
         assert_eq!(value["requestId"], "request-1");
         assert_eq!(value["response"]["finishReason"], "stop");
         assert!(value.get("request_id").is_none());
+    }
+
+    #[test]
+    fn cancelled_events_use_the_frontend_wire_format() {
+        let value = serde_json::to_value(ResponseEvent::Cancelled {
+            request_id: "request-2".to_owned(),
+        })
+        .unwrap();
+
+        assert_eq!(value["type"], "cancelled");
+        assert_eq!(value["requestId"], "request-2");
+    }
+
+    #[test]
+    fn failed_events_include_a_machine_readable_error_code() {
+        let value = serde_json::to_value(ResponseEvent::Failed {
+            request_id: "request-3".to_owned(),
+            code: "rate_limited".to_owned(),
+            message: "try later".to_owned(),
+        })
+        .unwrap();
+        assert_eq!(value["code"], "rate_limited");
+        assert_eq!(value["message"], "try later");
     }
 }

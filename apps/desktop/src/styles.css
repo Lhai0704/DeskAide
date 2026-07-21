@@ -28,7 +28,8 @@ body,
 }
 
 button,
-textarea {
+textarea,
+select {
   font: inherit;
 }
 

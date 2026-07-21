@@ -26,9 +26,11 @@ serde_json.workspace = true
 tauri = { version = "2", features = [] }
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-store = "2"
+thiserror.workspace = true
 tokio.workspace = true
+url.workspace = true
 uuid.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 deskaide-platform-windows = { path = "../../../crates/platform-windows" }
-
+keyring = { version = "3.6.3", default-features = false, features = ["windows-native"] }
