@@ -27,6 +27,8 @@
     const start = lastPosition ?? (await avatarWindow.outerPosition());
     state = 'activated';
 
+    // Prevent assistant blur-hide while this avatar click/drag is in progress.
+    await invoke('set_avatar_interacting', { interacting: true });
     try {
       await avatarWindow.startDragging();
       const end = await avatarWindow.outerPosition();
@@ -34,6 +36,7 @@
       const distance = Math.hypot(end.x - start.x, end.y - start.y);
       if (distance < 5) await invoke('toggle_assistant');
     } finally {
+      await invoke('set_avatar_interacting', { interacting: false });
       window.setTimeout(() => (state = 'idle'), 180);
     }
   }

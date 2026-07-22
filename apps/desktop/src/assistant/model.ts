@@ -37,6 +37,7 @@ export interface TargetWindow {
 export interface AssistantShownPayload {
   target: TargetWindow | null;
   warning: string | null;
+  pinned: boolean;
 }
 
 export type ContextSourceId =

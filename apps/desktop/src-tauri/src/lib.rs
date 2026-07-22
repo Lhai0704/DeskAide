@@ -2,6 +2,7 @@ mod credentials;
 mod model_profiles;
 mod positioning;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use credentials::{CredentialStore, SystemCredentialStore};
@@ -57,6 +58,10 @@ struct AppState {
     context_target: Mutex<Option<TargetWindow>>,
     movement: Mutex<MovementState>,
     active_request: Arc<Mutex<Option<ActiveRequest>>>,
+    /// When true, assistant stays always-on-top and does not hide on blur.
+    assistant_pinned: AtomicBool,
+    /// Suppress blur-hide while the user is interacting with the avatar (click/drag).
+    avatar_interacting: AtomicBool,
 }
 
 #[derive(Debug)]
@@ -75,6 +80,7 @@ struct MovementState {
 struct AssistantShownPayload {
     target: Option<TargetWindow>,
     warning: Option<String>,
+    pinned: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -127,6 +133,8 @@ impl AppState {
             context_target: Mutex::new(None),
             movement: Mutex::new(MovementState::default()),
             active_request: Arc::new(Mutex::new(None)),
+            assistant_pinned: AtomicBool::new(false),
+            avatar_interacting: AtomicBool::new(false),
         }
     }
 }
@@ -305,11 +313,22 @@ async fn toggle_assistant(app: AppHandle, state: State<'_, AppState>) -> Result<
                 (target, Some(error.to_string()))
             }
         };
+        let pinned = state.assistant_pinned.load(Ordering::SeqCst);
+        assistant
+            .set_always_on_top(pinned)
+            .map_err(display_error)?;
         position_assistant(&app)?;
         assistant.show().map_err(display_error)?;
         assistant.set_focus().map_err(display_error)?;
         assistant
-            .emit("assistant-shown", AssistantShownPayload { target, warning })
+            .emit(
+                "assistant-shown",
+                AssistantShownPayload {
+                    target,
+                    warning,
+                    pinned,
+                },
+            )
             .map_err(display_error)
     }
 }
@@ -319,6 +338,44 @@ fn hide_assistant(app: AppHandle) -> Result<(), String> {
     get_window(&app, ASSISTANT_LABEL)?
         .hide()
         .map_err(display_error)
+}
+
+#[tauri::command]
+fn set_assistant_pinned(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    pinned: bool,
+) -> Result<(), String> {
+    state.assistant_pinned.store(pinned, Ordering::SeqCst);
+    get_window(&app, ASSISTANT_LABEL)?
+        .set_always_on_top(pinned)
+        .map_err(display_error)
+}
+
+#[tauri::command]
+fn set_avatar_interacting(app: AppHandle, state: State<'_, AppState>, interacting: bool) {
+    state.avatar_interacting.store(interacting, Ordering::SeqCst);
+    if interacting {
+        return;
+    }
+    // After avatar click/drag, if the assistant stayed open but lost focus,
+    // restore focus so a later outside click can still blur-hide it.
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        let state = app.state::<AppState>();
+        if state.avatar_interacting.load(Ordering::SeqCst)
+            || state.assistant_pinned.load(Ordering::SeqCst)
+        {
+            return;
+        }
+        if let Ok(assistant) = get_window(&app, ASSISTANT_LABEL)
+            && assistant.is_visible().unwrap_or(false)
+            && !assistant.is_focused().unwrap_or(false)
+        {
+            let _ = assistant.set_focus();
+        }
+    });
 }
 
 #[tauri::command]
@@ -900,6 +957,33 @@ fn display_error(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
 
+fn handle_assistant_blur(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        // Delay so avatar click/drag can mark interaction and so brief focus
+        // transitions do not flash-hide the panel.
+        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+        let state = app.state::<AppState>();
+        if state.assistant_pinned.load(Ordering::SeqCst) {
+            return;
+        }
+        if state.avatar_interacting.load(Ordering::SeqCst) {
+            return;
+        }
+        let Ok(assistant) = get_window(&app, ASSISTANT_LABEL) else {
+            return;
+        };
+        if assistant.is_focused().unwrap_or(false) {
+            return;
+        }
+        if assistant.is_visible().unwrap_or(false)
+            && let Err(error) = assistant.hide()
+        {
+            eprintln!("failed to hide assistant after blur: {error}");
+        }
+    });
+}
+
 #[cfg(windows)]
 pub fn run() {
     let shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::Space);
@@ -933,18 +1017,28 @@ pub fn run() {
             test_model_connection,
             toggle_assistant,
             hide_assistant,
+            set_assistant_pinned,
+            set_avatar_interacting,
             submit_model_request,
             stop_generation,
             set_assistant_expanded
         ])
         .on_window_event(|window, event| {
-            if window.label() == AVATAR_LABEL && let WindowEvent::Moved(position) = event {
-                handle_avatar_moved(window.app_handle(), *position);
+            match event {
+                WindowEvent::Moved(position) if window.label() == AVATAR_LABEL => {
+                    handle_avatar_moved(window.app_handle(), *position);
+                }
+                WindowEvent::Focused(false) if window.label() == ASSISTANT_LABEL => {
+                    handle_assistant_blur(window.app_handle());
+                }
+                _ => {}
             }
         })
         .setup(move |app| {
             load_profiles(app.handle())?;
             restore_avatar_position(app.handle())?;
+            // Default to the large (expanded) assistant size on startup.
+            set_assistant_expanded(app.handle().clone(), true)?;
             position_assistant(app.handle())?;
             if let Err(error) = app.global_shortcut().register(shortcut) {
                 eprintln!(

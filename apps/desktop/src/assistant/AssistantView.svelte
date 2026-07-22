@@ -29,7 +29,8 @@
   let messages: ConversationMessage[] = [];
   let pending = false;
   let stopping = false;
-  let expanded = false;
+  let expanded = true;
+  let pinned = false;
   let contextOpen = false;
   let settingsOpen = false;
   let bootstrap: AssistantBootstrap | null = null;
@@ -68,6 +69,7 @@
     const unlistenShown = listen<AssistantShownPayload>('assistant-shown', ({ payload }) => {
       activeTarget = payload.target;
       contextWarning = payload.warning ?? '';
+      pinned = payload.pinned;
       contextResults = [];
       selectedContextSources.clear();
       window.setTimeout(() => textarea?.focus(), 0);
@@ -190,6 +192,12 @@
     expanded = next;
   }
 
+  async function togglePinned() {
+    const next = !pinned;
+    await invoke('set_assistant_pinned', { pinned: next });
+    pinned = next;
+  }
+
   async function openSettings() {
     if (!expanded) {
       await invoke('set_assistant_expanded', { expanded: true });
@@ -261,8 +269,16 @@
       <button class="icon-button" type="button" title="模型设置" onclick={openSettings}>⚙</button>
       <button
         class="icon-button"
+        class:pinned
         type="button"
-        title={expanded ? '收起窗口' : '展开窗口'}
+        title={pinned ? '取消置顶' : '置顶窗口'}
+        aria-pressed={pinned}
+        onclick={togglePinned}>{pinned ? '📌' : '📍'}</button
+      >
+      <button
+        class="icon-button"
+        type="button"
+        title={expanded ? '收起为小窗口' : '展开为大窗口'}
         onclick={toggleExpanded}>{expanded ? '↙' : '↗'}</button
       >
       <button
@@ -481,6 +497,11 @@
   .icon-button:hover {
     color: #eff8ff;
     background: rgb(255 255 255 / 11%);
+  }
+
+  .icon-button.pinned {
+    color: #7ee2ff;
+    background: rgb(126 226 255 / 16%);
   }
 
   .close {
