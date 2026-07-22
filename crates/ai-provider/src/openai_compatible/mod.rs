@@ -5,6 +5,9 @@ mod stream;
 
 use std::time::Duration;
 
+#[cfg(debug_assertions)]
+use std::time::Instant;
+
 use async_trait::async_trait;
 use deskaide_assistant_core::{ModelCapabilities, ModelRequest, ModelResponse, ResponseEvent};
 use futures_util::StreamExt;
@@ -139,41 +142,94 @@ impl ModelProvider for OpenAiCompatibleProvider {
     ) -> Result<ModelResponse, ModelError> {
         let request_id = request.request_id.clone();
         let payload = ChatCompletionRequest::from_model_request(&self.config, request)?;
+        let endpoint = self.config.chat_completions_url()?;
+        #[cfg(debug_assertions)]
+        {
+            eprintln!(
+                "{}\n",
+                payload.debug_view(&request_id, &self.config.profile_id, &endpoint)
+            );
+        }
+        #[cfg(debug_assertions)]
+        let started_at = Instant::now();
         let builder = self
             .client
-            .post(self.config.chat_completions_url()?)
+            .post(endpoint)
             .bearer_auth(self.config.api_key.expose())
             .headers(self.config.header_map()?)
             .json(&payload);
-        let response = builder.send().await.map_err(ModelError::from_reqwest)?;
-        if !response.status().is_success() {
-            return Err(parse_http_error(response, self.config.api_key.expose()).await);
-        }
+        let result = async {
+            let response = builder.send().await.map_err(ModelError::from_reqwest)?;
+            if !response.status().is_success() {
+                return Err(parse_http_error(response, self.config.api_key.expose()).await);
+            }
 
-        send(
-            &event_sender,
-            ResponseEvent::Started {
-                request_id: request_id.clone(),
-            },
-        )?;
-        let result = if self.config.capabilities.supports_streaming {
-            self.complete_streaming(request_id.clone(), response, &event_sender)
-                .await?
-        } else {
-            let response: ChatCompletionResponse = response
-                .json()
-                .await
-                .map_err(|_| ModelError::IncompatibleResponse("invalid JSON body".to_owned()))?;
-            response.into_model_response()?
-        };
-        send(
-            &event_sender,
-            ResponseEvent::Completed {
-                request_id,
-                response: result.clone(),
-            },
-        )?;
-        Ok(result)
+            send(
+                &event_sender,
+                ResponseEvent::Started {
+                    request_id: request_id.clone(),
+                },
+            )?;
+            let response = if self.config.capabilities.supports_streaming {
+                self.complete_streaming(request_id.clone(), response, &event_sender)
+                    .await?
+            } else {
+                let response: ChatCompletionResponse = response.json().await.map_err(|_| {
+                    ModelError::IncompatibleResponse("invalid JSON body".to_owned())
+                })?;
+                response.into_model_response()?
+            };
+            send(
+                &event_sender,
+                ResponseEvent::Completed {
+                    request_id: request_id.clone(),
+                    response: response.clone(),
+                },
+            )?;
+            Ok(response)
+        }
+        .await;
+
+        #[cfg(debug_assertions)]
+        log_model_result(&request_id, &result, started_at.elapsed());
+
+        result
+    }
+}
+
+#[cfg(debug_assertions)]
+fn log_model_result(
+    request_id: &str,
+    result: &Result<ModelResponse, ModelError>,
+    elapsed: Duration,
+) {
+    let elapsed_ms = elapsed.as_millis();
+    match result {
+        Ok(response) => eprintln!(
+            "============================================================\n\
+             [DeskAide] MODEL RESPONSE\n\
+             ============================================================\n\
+             Request ID   : {request_id}\n\
+             Duration     : {elapsed_ms} ms\n\
+             Finish reason: {}\n\
+             \n\
+             ---------------- RESPONSE CONTENT ----------------\n\
+             {}\n\
+             -------------- END RESPONSE CONTENT --------------\n\
+             ============================================================\n",
+            response.finish_reason, response.content
+        ),
+        Err(error) => eprintln!(
+            "============================================================\n\
+             [DeskAide] MODEL REQUEST FAILED\n\
+             ============================================================\n\
+             Request ID: {request_id}\n\
+             Duration  : {elapsed_ms} ms\n\
+             Error code: {}\n\
+             Error     : {error}\n\
+             ============================================================\n",
+            error.code()
+        ),
     }
 }
 

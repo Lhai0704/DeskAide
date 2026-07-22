@@ -78,6 +78,62 @@ impl ChatCompletionRequest {
                 .or(config.max_output_tokens),
         })
     }
+
+    #[cfg(debug_assertions)]
+    pub(crate) fn debug_view(
+        &self,
+        request_id: &str,
+        profile_id: &str,
+        endpoint: &url::Url,
+    ) -> String {
+        let mut safe_endpoint = endpoint.clone();
+        let _ = safe_endpoint.set_username("");
+        let _ = safe_endpoint.set_password(None);
+        safe_endpoint.set_query(None);
+        safe_endpoint.set_fragment(None);
+
+        let mut lines = vec![
+            "============================================================".to_owned(),
+            "[DeskAide] MODEL REQUEST".to_owned(),
+            "============================================================".to_owned(),
+            format!("Request ID : {request_id}"),
+            format!("Profile    : {profile_id}"),
+            format!("Endpoint   : {safe_endpoint}"),
+            format!("Model      : {}", self.model),
+            format!("Streaming  : {}", self.stream),
+            format!(
+                "Temperature: {}",
+                self.temperature
+                    .map_or_else(|| "default".to_owned(), |value| value.to_string())
+            ),
+            format!(
+                "Max tokens : {}",
+                self.max_tokens
+                    .map_or_else(|| "default".to_owned(), |value| value.to_string())
+            ),
+            format!("Messages   : {}", self.messages.len()),
+        ];
+
+        for (index, message) in self.messages.iter().enumerate() {
+            lines.extend([
+                String::new(),
+                format!(
+                    "---------------- MESSAGE {} [{}] ----------------",
+                    index + 1,
+                    message.role.to_ascii_uppercase()
+                ),
+                message.content.clone(),
+                format!(
+                    "-------------- END MESSAGE {} [{}] --------------",
+                    index + 1,
+                    message.role.to_ascii_uppercase()
+                ),
+            ]);
+        }
+
+        lines.push("============================================================".to_owned());
+        lines.join("\n")
+    }
 }
 
 fn render_text_context(context: &[ContextPayload]) -> Option<String> {
@@ -224,5 +280,30 @@ mod request_tests {
             ChatCompletionRequest::from_model_request(&config(), request(Vec::new())).unwrap();
         let json = serde_json::to_value(body).unwrap();
         assert_eq!(json["messages"][0]["content"], "What does this mean?");
+    }
+
+    #[test]
+    fn debug_view_contains_the_complete_outgoing_prompt_without_url_secrets() {
+        let mut request = request(vec![payload(
+            ContextSourceType::SelectedText,
+            "important selection",
+        )]);
+        request.system_prompt = Some("Be helpful".to_owned());
+        let body = ChatCompletionRequest::from_model_request(&config(), request).unwrap();
+        let endpoint = url::Url::parse(
+            "https://user:password@example.com/v1/chat/completions?api_key=secret#fragment",
+        )
+        .unwrap();
+
+        let view = body.debug_view("request-1", "profile-1", &endpoint);
+
+        assert!(view.contains("MESSAGE 1 [SYSTEM]"));
+        assert!(view.contains("Be helpful"));
+        assert!(view.contains("important selection"));
+        assert!(view.contains("[USER QUESTION]\nWhat does this mean?"));
+        assert!(view.contains("Endpoint   : https://example.com/v1/chat/completions"));
+        assert!(!view.contains("password"));
+        assert!(!view.contains("api_key"));
+        assert!(!view.contains("secret"));
     }
 }
