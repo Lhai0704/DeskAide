@@ -38,7 +38,11 @@ npm install
 npm run tauri --workspace @deskaide/desktop -- dev
 ```
 
-首次启动时只显示助手形象。拖动可改变位置；单击或按 `Ctrl + Shift + Space` 打开问答面板。
+`tauri dev` 会同时启动 Vite 与桌面端，适合日常开发。
+
+首次启动时只显示助手形象。拖动可改变位置；单击或按 `Ctrl + Shift + Space` 打开问答面板。右键助手形象可选择“退出”。
+
+> **不要直接运行** `cargo build` 后的 `target/debug/deskaide.exe` 来当作独立程序使用，除非已启用默认的 `custom-protocol` 并先执行前端构建。可独立双击运行的程序请用下面的 `tauri build` 命令生成。
 
 展开 Assistant 后打开“模型设置”，新建 OpenAI-Compatible Profile。Base URL 可以填写 Provider 根路径（例如 `https://api.longcat.chat/openai`）或以 `/v1` 结尾的 API 地址；API Key 只写入系统凭据库。保存后再由用户主动点击“测试连接”。
 
@@ -61,7 +65,16 @@ npm run test
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+```
+
+生成可独立运行的 exe（会先构建前端并嵌入资源，无需 localhost）：
+
+```powershell
+# Debug（便于排查，会附带黑色控制台窗口）：产物在 target/debug/deskaide.exe
 npm run tauri --workspace @deskaide/desktop -- build --debug --no-bundle
+
+# Release / 安装包（无控制台，只显示助手形象）
+npm run tauri --workspace @deskaide/desktop -- build
 ```
 
 ## 项目结构

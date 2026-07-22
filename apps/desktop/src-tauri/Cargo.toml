@@ -34,3 +34,9 @@ uuid.workspace = true
 [target.'cfg(windows)'.dependencies]
 deskaide-platform-windows = { path = "../../../crates/platform-windows" }
 keyring = { version = "3.6.3", default-features = false, features = ["windows-native"] }
+
+[features]
+# Embed frontend assets so the .exe works without a Vite dev server.
+# `tauri dev` disables this feature so HMR can use http://localhost:1420.
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

@@ -702,6 +702,11 @@ fn take_matching_request(
 }
 
 #[tauri::command]
+fn exit_app(app: AppHandle) {
+    app.exit(0);
+}
+
+#[tauri::command]
 fn set_assistant_expanded(app: AppHandle, expanded: bool) -> Result<(), String> {
     let avatar = get_window(&app, AVATAR_LABEL)?;
     let assistant = get_window(&app, ASSISTANT_LABEL)?;
@@ -935,7 +940,8 @@ pub fn run() {
             hide_assistant,
             submit_model_request,
             stop_generation,
-            set_assistant_expanded
+            set_assistant_expanded,
+            exit_app
         ])
         .on_window_event(|window, event| {
             if window.label() == AVATAR_LABEL && let WindowEvent::Moved(position) = event {
