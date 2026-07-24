@@ -83,7 +83,8 @@ impl OpenAiCompatibleConfig {
     fn endpoint_url(&self, endpoint: &str) -> Result<Url, ModelError> {
         let mut base = self.base_url()?;
         let mut path = base.path().trim_end_matches('/').to_owned();
-        if !path.ends_with("/v1") && path != "v1" {
+        let has_versioned_openai_path = path.ends_with("/v1") || path.ends_with("/v1beta/openai");
+        if !has_versioned_openai_path {
             path.push_str("/v1");
         }
         path.push('/');

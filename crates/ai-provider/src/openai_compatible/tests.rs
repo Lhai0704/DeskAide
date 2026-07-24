@@ -306,6 +306,22 @@ fn normalizes_base_urls_with_and_without_v1() {
 }
 
 #[test]
+fn preserves_google_ai_studio_openai_compatible_base_url() {
+    let provider_config = config(
+        "https://generativelanguage.googleapis.com/v1beta/openai/".to_owned(),
+        false,
+    );
+    assert_eq!(
+        provider_config.chat_completions_url().unwrap().as_str(),
+        "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+    );
+    assert_eq!(
+        provider_config.model_url().unwrap().as_str(),
+        "https://generativelanguage.googleapis.com/v1beta/openai/models/test-model"
+    );
+}
+
+#[test]
 fn rejects_sensitive_custom_headers() {
     let mut provider_config = config("https://example.com".to_owned(), false);
     provider_config.custom_headers =
