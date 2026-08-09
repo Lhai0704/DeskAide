@@ -216,34 +216,34 @@
   label {
     display: grid;
     gap: 5px;
-    color: #a9b9ce;
+    color: var(--theme-muted-strong);
     font-size: 11px;
   }
   label > span {
-    color: #d8e7fa;
+    color: var(--theme-heading);
     font-weight: 650;
   }
   input,
   textarea {
     width: 100%;
     padding: 8px 9px;
-    border: 1px solid rgb(151 198 255 / 16%);
+    border: 1px solid var(--theme-border);
     border-radius: 8px;
     outline: none;
-    color: #edf7ff;
-    background: rgb(4 10 18 / 58%);
+    color: var(--theme-text-strong);
+    background: var(--theme-input-bg);
     font-size: 11px;
   }
   input:focus,
   textarea:focus {
-    border-color: rgb(126 226 255 / 52%);
+    border-color: var(--theme-accent);
   }
   textarea {
     min-height: 62px;
     resize: vertical;
   }
   small {
-    color: #71829a;
+    color: var(--theme-muted);
     font-size: 9px;
     line-height: 1.4;
   }
@@ -275,21 +275,21 @@
   }
   button {
     padding: 7px 11px;
-    border: 1px solid rgb(151 198 255 / 15%);
+    border: 1px solid var(--theme-border);
     border-radius: 8px;
-    color: #bdd0e8;
-    background: rgb(255 255 255 / 6%);
+    color: var(--theme-muted-strong);
+    background: var(--theme-control-bg);
     cursor: pointer;
     font-size: 10px;
   }
   button.primary {
     border: 0;
-    color: #071019;
-    background: linear-gradient(135deg, #7ee2ff, #79b7ff);
+    color: var(--theme-primary-text);
+    background: var(--theme-primary-background);
     font-weight: 750;
   }
   button.danger {
-    color: #ffb0b0;
+    color: var(--theme-danger);
   }
   button:disabled {
     cursor: default;
@@ -303,16 +303,16 @@
     font-size: 10px;
   }
   .error {
-    color: #ffb2b2;
-    background: rgb(255 90 90 / 9%);
+    color: var(--theme-error);
+    background: var(--theme-error-background);
   }
   .notice {
-    color: #a5efca;
-    background: rgb(65 210 143 / 9%);
+    color: var(--theme-success);
+    background: var(--theme-success-background);
   }
   .readonly-profile p {
     margin: 0;
-    color: #8ea0b9;
+    color: var(--theme-muted-strong);
     font-size: 11px;
   }
   h3 {
@@ -328,12 +328,12 @@
     justify-content: space-between;
   }
   dt {
-    color: #788aa2;
+    color: var(--theme-muted);
     font-size: 10px;
   }
   dd {
     margin: 0;
-    color: #c8d8ec;
+    color: var(--theme-heading);
     font-size: 10px;
   }
 </style>

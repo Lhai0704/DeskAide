@@ -4,6 +4,7 @@
   import { onMount } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import ModelSettings from '../settings/ModelSettings.svelte';
+  import { loadTheme, saveTheme, type Theme } from '../settings/theme';
   import { buildModelMessages, type ConversationMessage } from './conversation';
   import {
     initialResponseState,
@@ -33,6 +34,7 @@
   let pinned = false;
   let contextOpen = false;
   let settingsOpen = false;
+  let theme: Theme = loadTheme();
   let bootstrap: AssistantBootstrap | null = null;
   let activeModelProfileId = '';
   let conversationId = createId();
@@ -222,6 +224,11 @@
     }
   }
 
+  function changeTheme(next: Theme) {
+    theme = next;
+    saveTheme(next);
+  }
+
   function onKeyDown(event: KeyboardEvent) {
     if (event.key === 'Escape') {
       event.preventDefault();
@@ -266,7 +273,7 @@
       <button class="icon-button" type="button" title="新建会话" onclick={newConversation}
         >＋</button
       >
-      <button class="icon-button" type="button" title="模型设置" onclick={openSettings}>⚙</button>
+      <button class="icon-button" type="button" title="设置" onclick={openSettings}>⚙</button>
       <button
         class="icon-button"
         class:pinned
@@ -424,7 +431,9 @@
     <ModelSettings
       profiles={bootstrap.modelProfiles}
       activeProfileId={activeModelProfileId}
+      {theme}
       onchanged={loadBootstrap}
+      onthemechange={changeTheme}
       onclose={() => (settingsOpen = false)}
     />
   {/if}
@@ -438,15 +447,13 @@
     height: 100%;
     padding: 16px;
     overflow: hidden;
-    border: 1px solid rgb(151 198 255 / 22%);
+    border: 1px solid var(--theme-border-strong);
     border-radius: 20px;
     grid-template-rows: auto auto minmax(0, 1fr) auto;
     gap: 11px;
-    color: #eaf2ff;
-    background:
-      radial-gradient(circle at 92% 0%, rgb(53 143 196 / 24%), transparent 38%),
-      linear-gradient(145deg, rgb(19 27 42 / 98%), rgb(9 14 24 / 98%));
-    box-shadow: 0 18px 60px rgb(0 0 0 / 40%);
+    color: var(--theme-text);
+    background: var(--theme-panel-background);
+    box-shadow: var(--theme-shadow);
   }
 
   .panel.expanded {
@@ -465,7 +472,7 @@
 
   .eyebrow {
     margin: 0 0 2px;
-    color: #7ee2ff;
+    color: var(--theme-accent);
     font-size: 9px;
     font-weight: 750;
     letter-spacing: 0.16em;
@@ -488,20 +495,20 @@
     place-items: center;
     border: 0;
     border-radius: 9px;
-    color: #aebbd0;
-    background: rgb(255 255 255 / 6%);
+    color: var(--theme-muted-strong);
+    background: var(--theme-control-bg);
     font-size: 17px;
     cursor: pointer;
   }
 
   .icon-button:hover {
-    color: #eff8ff;
-    background: rgb(255 255 255 / 11%);
+    color: var(--theme-text-strong);
+    background: var(--theme-control-hover);
   }
 
   .icon-button.pinned {
-    color: #7ee2ff;
-    background: rgb(126 226 255 / 16%);
+    color: var(--theme-accent);
+    background: var(--theme-accent-soft);
   }
 
   .close {
@@ -522,10 +529,10 @@
     gap: 6px;
     min-height: 29px;
     padding: 4px 8px;
-    border: 1px solid rgb(126 226 255 / 17%);
+    border: 1px solid var(--theme-accent-border);
     border-radius: 9px;
-    color: #9fb0c8;
-    background: rgb(126 226 255 / 6%);
+    color: var(--theme-muted-strong);
+    background: var(--theme-accent-soft);
     font-size: 10px;
   }
 
@@ -533,14 +540,14 @@
     max-width: 120px;
     border: 0;
     outline: 0;
-    color: #c9f3ff;
+    color: var(--theme-accent-text);
     background: transparent;
     font-size: 11px;
   }
 
   .model-picker option {
-    color: #eaf2ff;
-    background: #111b2a;
+    color: var(--theme-text);
+    background: var(--theme-option-bg);
   }
 
   .context-picker {
@@ -548,7 +555,7 @@
   }
 
   .context-trigger {
-    color: #c9f3ff;
+    color: var(--theme-accent-text);
     cursor: pointer;
   }
 
@@ -558,13 +565,13 @@
     height: 16px;
     place-items: center;
     border-radius: 99px;
-    color: #8da0bb;
-    background: rgb(255 255 255 / 8%);
+    color: var(--theme-muted);
+    background: var(--theme-control-bg);
   }
 
   .privacy-note {
     margin-left: auto;
-    color: #63748d;
+    color: var(--theme-muted);
     font-size: 9px;
   }
 
@@ -575,10 +582,10 @@
     left: 0;
     width: 285px;
     padding: 10px;
-    border: 1px solid rgb(151 198 255 / 20%);
+    border: 1px solid var(--theme-border-strong);
     border-radius: 12px;
-    background: rgb(12 20 32 / 99%);
-    box-shadow: 0 14px 36px rgb(0 0 0 / 45%);
+    background: var(--theme-popup-bg);
+    box-shadow: var(--theme-popup-shadow);
   }
 
   .context-heading {
@@ -594,7 +601,7 @@
 
   .context-heading small,
   .context-option small {
-    color: #687991;
+    color: var(--theme-muted);
     font-size: 9px;
   }
 
@@ -622,22 +629,22 @@
   .conversation {
     padding: 10px;
     overflow: auto;
-    border: 1px solid rgb(255 255 255 / 6%);
+    border: 1px solid var(--theme-border);
     border-radius: 13px;
-    background: rgb(3 8 15 / 45%);
-    scrollbar-color: #304158 transparent;
+    background: var(--theme-conversation-bg);
+    scrollbar-color: var(--theme-scrollbar) transparent;
   }
 
   .empty {
     display: grid;
     height: 100%;
     place-content: center;
-    color: #7889a3;
+    color: var(--theme-muted);
     text-align: center;
   }
 
   .empty > span {
-    color: #7ee2ff;
+    color: var(--theme-accent);
     font-size: 21px;
   }
 
@@ -653,20 +660,20 @@
     margin: 0 0 10px auto;
     padding: 9px 11px;
     border-radius: 12px 12px 3px 12px;
-    background: rgb(77 144 208 / 18%);
+    background: var(--theme-message-user-bg);
   }
 
   .message.assistant-message {
     margin-right: auto;
     margin-left: 0;
     border-radius: 12px 12px 12px 3px;
-    background: rgb(255 255 255 / 5%);
+    background: var(--theme-message-assistant-bg);
   }
 
   .message > span {
     display: block;
     margin-bottom: 3px;
-    color: #7ee2ff;
+    color: var(--theme-accent);
     font-size: 9px;
     font-weight: 700;
   }
@@ -682,7 +689,7 @@
   .message > small {
     display: block;
     margin-top: 5px;
-    color: #8291a6;
+    color: var(--theme-muted);
     font-size: 9px;
   }
 
@@ -692,20 +699,20 @@
     height: 14px;
     margin-left: 3px;
     vertical-align: -2px;
-    background: #7ee2ff;
+    background: var(--theme-accent);
     animation: blink 700ms steps(2) infinite;
   }
 
   .system-error {
     margin: 5px;
-    color: #ff9f9f;
+    color: var(--theme-error);
     font-size: 11px;
     line-height: 1.5;
   }
 
   .system-status {
     margin: 5px;
-    color: #93a7c0;
+    color: var(--theme-muted-strong);
     font-size: 11px;
   }
 
@@ -715,8 +722,8 @@
     padding: 7px 9px;
     gap: 3px;
     border-radius: 9px;
-    color: #93a7c0;
-    background: rgb(126 226 255 / 6%);
+    color: var(--theme-muted-strong);
+    background: var(--theme-accent-soft);
   }
 
   .context-results small {
@@ -725,14 +732,14 @@
   }
 
   .context-results small.failed {
-    color: #ffaeae;
+    color: var(--theme-error);
   }
 
   .composer {
     padding: 10px;
-    border: 1px solid rgb(255 255 255 / 9%);
+    border: 1px solid var(--theme-border);
     border-radius: 13px;
-    background: rgb(255 255 255 / 4%);
+    background: var(--theme-surface-bg);
   }
 
   textarea {
@@ -742,14 +749,14 @@
     resize: none;
     border: 0;
     outline: 0;
-    color: #f4f8ff;
+    color: var(--theme-text-strong);
     background: transparent;
     font-size: 12px;
     line-height: 1.5;
   }
 
   textarea::placeholder {
-    color: #71819a;
+    color: var(--theme-muted);
   }
 
   .composer-footer {
@@ -757,7 +764,7 @@
   }
 
   .composer-footer > span {
-    color: #667790;
+    color: var(--theme-muted);
     font-size: 9px;
   }
 
@@ -767,17 +774,17 @@
     padding: 7px 12px;
     border: 0;
     border-radius: 8px;
-    color: #071019;
-    background: linear-gradient(135deg, #7ee2ff, #79b7ff);
+    color: var(--theme-primary-text);
+    background: var(--theme-primary-background);
     font-size: 11px;
     font-weight: 750;
     cursor: pointer;
   }
 
   .stop {
-    color: #ffcece;
-    background: rgb(255 102 102 / 14%);
-    box-shadow: inset 0 0 0 1px rgb(255 139 139 / 18%);
+    color: var(--theme-stop-text);
+    background: var(--theme-stop-background);
+    box-shadow: inset 0 0 0 1px var(--theme-stop-border);
   }
 
   .send:disabled,

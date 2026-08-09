@@ -1,20 +1,25 @@
 <script lang="ts">
   import type { ModelProfile } from '../assistant/model';
   import ModelProfileForm from './ModelProfileForm.svelte';
+  import ThemeSettings from './ThemeSettings.svelte';
+  import type { Theme } from './theme';
 
   interface Props {
     profiles: ModelProfile[];
     activeProfileId: string;
+    theme: Theme;
     onchanged: () => void;
+    onthemechange: (theme: Theme) => void;
     onclose: () => void;
   }
 
-  let { profiles, activeProfileId, onchanged, onclose }: Props = $props();
+  let { profiles, activeProfileId, theme, onchanged, onthemechange, onclose }: Props = $props();
   function initialSelection() {
     return activeProfileId;
   }
   let selectedId = $state(initialSelection());
   let creating = $state(false);
+  let section = $state<'appearance' | 'models'>('appearance');
   let selected = $derived(profiles.find((profile) => profile.id === selectedId) ?? null);
 
   $effect(() => {
@@ -27,6 +32,7 @@
     creating = false;
     await onchanged();
     selectedId = profile.id;
+    section = 'models';
   }
 
   async function deleted() {
@@ -36,23 +42,37 @@
   }
 </script>
 
-<section class="settings" aria-label="模型设置">
+<section class="settings" aria-label="设置">
   <header>
     <div>
-      <p>MODEL PROFILES</p>
-      <h2>模型设置</h2>
+      <p>SETTINGS</p>
+      <h2>设置</h2>
     </div>
-    <button class="close" type="button" aria-label="关闭模型设置" onclick={onclose}>×</button>
+    <button class="close" type="button" aria-label="关闭设置" onclick={onclose}>×</button>
   </header>
   <div class="settings-body">
-    <nav aria-label="模型配置列表">
+    <nav aria-label="设置导航">
+      <button
+        type="button"
+        class="appearance"
+        class:selected={section === 'appearance'}
+        onclick={() => {
+          section = 'appearance';
+          creating = false;
+        }}
+      >
+        <span>外观</span>
+        <small>{theme === 'light' ? '浅色模式' : '深色模式'}</small>
+      </button>
+      <p class="nav-heading">模型配置</p>
       {#each profiles as profile (profile.id)}
         <button
           type="button"
-          class:selected={!creating && profile.id === selectedId}
+          class:selected={section === 'models' && !creating && profile.id === selectedId}
           onclick={() => {
             selectedId = profile.id;
             creating = false;
+            section = 'models';
           }}
         >
           <span>{profile.name}</span>
@@ -65,17 +85,29 @@
           >
         </button>
       {/each}
-      <button class="add" type="button" onclick={() => (creating = true)}>＋ 新建 Profile</button>
+      <button
+        class="add"
+        class:selected={section === 'models' && creating}
+        type="button"
+        onclick={() => {
+          creating = true;
+          section = 'models';
+        }}>＋ 新建 Profile</button
+      >
     </nav>
     <div class="form-panel">
-      {#key creating ? 'new' : selectedId}
-        <ModelProfileForm
-          profile={creating ? null : selected}
-          {activeProfileId}
-          onsaved={saved}
-          ondeleted={deleted}
-        />
-      {/key}
+      {#if section === 'appearance'}
+        <ThemeSettings {theme} {onthemechange} />
+      {:else}
+        {#key creating ? 'new' : selectedId}
+          <ModelProfileForm
+            profile={creating ? null : selected}
+            {activeProfileId}
+            onsaved={saved}
+            ondeleted={deleted}
+          />
+        {/key}
+      {/if}
     </div>
   </div>
 </section>
@@ -88,10 +120,10 @@
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
     padding: 18px;
-    border: 1px solid rgb(151 198 255 / 22%);
+    border: 1px solid var(--theme-border-strong);
     border-radius: 20px;
-    color: #eaf2ff;
-    background: linear-gradient(145deg, rgb(18 28 43 / 99.5%), rgb(8 14 24 / 99.5%));
+    color: var(--theme-text);
+    background: var(--theme-settings-background);
   }
   header {
     display: flex;
@@ -101,7 +133,7 @@
   }
   header p {
     margin: 0 0 2px;
-    color: #7ee2ff;
+    color: var(--theme-accent);
     font-size: 9px;
     font-weight: 750;
     letter-spacing: 0.16em;
@@ -115,8 +147,8 @@
     height: 30px;
     border: 0;
     border-radius: 8px;
-    color: #aebbd0;
-    background: rgb(255 255 255 / 6%);
+    color: var(--theme-muted-strong);
+    background: var(--theme-control-bg);
     font-size: 20px;
     cursor: pointer;
   }
@@ -133,7 +165,7 @@
     overflow: auto;
     flex-direction: column;
     gap: 6px;
-    border-right: 1px solid rgb(255 255 255 / 7%);
+    border-right: 1px solid var(--theme-border);
   }
   nav button {
     display: flex;
@@ -142,32 +174,43 @@
     border-radius: 9px;
     flex-direction: column;
     align-items: flex-start;
-    color: #a9b9cf;
+    color: var(--theme-muted-strong);
     background: transparent;
     cursor: pointer;
     text-align: left;
   }
   nav button.selected {
-    border-color: rgb(126 226 255 / 18%);
-    color: #e6f9ff;
-    background: rgb(126 226 255 / 8%);
+    border-color: var(--theme-accent-border);
+    color: var(--theme-accent-text);
+    background: var(--theme-accent-soft);
   }
   nav button.add {
     margin-top: 4px;
-    color: #82dbf8;
-    border-color: rgb(126 226 255 / 12%);
+    color: var(--theme-accent);
+    border-color: var(--theme-accent-border);
   }
   nav span {
     font-size: 11px;
   }
   nav small {
     margin-top: 3px;
-    color: #6e8098;
+    color: var(--theme-muted);
     font-size: 8px;
   }
   .form-panel {
     min-height: 0;
     padding: 2px 6px 4px 2px;
     overflow: auto;
+  }
+  .nav-heading {
+    margin: 9px 8px 1px;
+    color: var(--theme-muted);
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  nav button.appearance {
+    margin-bottom: 2px;
   }
 </style>
