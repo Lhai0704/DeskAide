@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "female-assistant",
+  "name": "Female AI Assistant",
+  "version": "1.0.0",
+  "renderer": "static",
+  "defaultWidth": 160,
+  "defaultHeight": 160,
+  "states": {
+    "idle": {
+      "asset": "idle.png",
+      "alt": "DeskAide 女性助手形象"
+    },
+    "activated": {
+      "asset": "activated.png",
+      "alt": "DeskAide 女性助手形象已激活"
+    }
+  }
+}

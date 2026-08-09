@@ -1,8 +1,14 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
-  import { listen } from '@tauri-apps/api/event';
+  import { emitTo, listen } from '@tauri-apps/api/event';
   import { onMount } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
+  import {
+    AVATAR_PACK_CHANGED_EVENT,
+    loadAvatarPackId,
+    saveAvatarPackId,
+    type AvatarPackId,
+  } from '../avatar/catalog';
   import ModelSettings from '../settings/ModelSettings.svelte';
   import { loadTheme, saveTheme, type Theme } from '../settings/theme';
   import { buildModelMessages, type ConversationMessage } from './conversation';
@@ -35,6 +41,7 @@
   let contextOpen = false;
   let settingsOpen = false;
   let theme: Theme = loadTheme();
+  let avatarPackId: AvatarPackId = loadAvatarPackId();
   let bootstrap: AssistantBootstrap | null = null;
   let activeModelProfileId = '';
   let conversationId = createId();
@@ -227,6 +234,12 @@
   function changeTheme(next: Theme) {
     theme = next;
     saveTheme(next);
+  }
+
+  function changeAvatar(next: AvatarPackId) {
+    avatarPackId = next;
+    saveAvatarPackId(next);
+    void emitTo('avatar', AVATAR_PACK_CHANGED_EVENT, { packId: next });
   }
 
   function onKeyDown(event: KeyboardEvent) {
@@ -431,8 +444,10 @@
     <ModelSettings
       profiles={bootstrap.modelProfiles}
       activeProfileId={activeModelProfileId}
+      {avatarPackId}
       {theme}
       onchanged={loadBootstrap}
+      onavatarchange={changeAvatar}
       onthemechange={changeTheme}
       onclose={() => (settingsOpen = false)}
     />

@@ -1,24 +1,57 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
+  import { listen } from '@tauri-apps/api/event';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { onMount } from 'svelte';
+  import {
+    AVATAR_PACK_CHANGED_EVENT,
+    avatarPackById,
+    isAvatarPackId,
+    loadAvatarPackId,
+    type AvatarPackChangedPayload,
+    type AvatarPackId,
+  } from './catalog';
   import { avatarAssetUrl, loadAvatarManifest } from './manifest';
   import type { AvatarPackManifest, AvatarStateName } from './types';
 
   let manifest: AvatarPackManifest | null = null;
+  let packRoot = avatarPackById(loadAvatarPackId()).root;
   let state: AvatarStateName = 'idle';
   let error = '';
   let lastPosition: { x: number; y: number } | null = null;
+  let loadGeneration = 0;
 
-  onMount(async () => {
+  onMount(() => {
     const avatarWindow = getCurrentWindow();
-    lastPosition = await avatarWindow.outerPosition();
+    void avatarWindow.outerPosition().then((position) => (lastPosition = position));
+    void loadAvatarPack(loadAvatarPackId());
+    const unlistenAvatarChange = listen<AvatarPackChangedPayload>(
+      AVATAR_PACK_CHANGED_EVENT,
+      ({ payload }) => {
+        if (isAvatarPackId(payload.packId)) void loadAvatarPack(payload.packId);
+      },
+    );
+
+    return () => {
+      void unlistenAvatarChange.then((unlisten) => unlisten());
+    };
+  });
+
+  async function loadAvatarPack(packId: AvatarPackId) {
+    const generation = ++loadGeneration;
+    const nextRoot = avatarPackById(packId).root;
+    error = '';
     try {
-      manifest = await loadAvatarManifest();
+      const nextManifest = await loadAvatarManifest(nextRoot);
+      if (generation !== loadGeneration) return;
+      packRoot = nextRoot;
+      manifest = nextManifest;
     } catch (cause) {
+      if (generation !== loadGeneration) return;
+      manifest = null;
       error = cause instanceof Error ? cause.message : '助手形象资源包加载失败';
     }
-  });
+  }
 
   async function onPointerDown(event: PointerEvent) {
     if (event.button !== 0) return;
@@ -46,7 +79,11 @@
 
 <button class="avatar" type="button" aria-label="打开 DeskAide" onpointerdown={onPointerDown}>
   {#if manifest}
-    <img src={avatarAssetUrl(manifest, state)} alt={manifest.states[state].alt} draggable="false" />
+    <img
+      src={avatarAssetUrl(manifest, state, packRoot)}
+      alt={manifest.states[state].alt}
+      draggable="false"
+    />
   {:else if error}
     <span class="fallback" title={error}>DA</span>
   {:else}

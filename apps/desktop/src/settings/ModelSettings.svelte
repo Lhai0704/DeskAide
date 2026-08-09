@@ -1,5 +1,7 @@
 <script lang="ts">
   import type { ModelProfile } from '../assistant/model';
+  import type { AvatarPackId } from '../avatar/catalog';
+  import AvatarSettings from './AvatarSettings.svelte';
   import ModelProfileForm from './ModelProfileForm.svelte';
   import ThemeSettings from './ThemeSettings.svelte';
   import type { Theme } from './theme';
@@ -7,19 +9,30 @@
   interface Props {
     profiles: ModelProfile[];
     activeProfileId: string;
+    avatarPackId: AvatarPackId;
     theme: Theme;
     onchanged: () => void;
+    onavatarchange: (packId: AvatarPackId) => void;
     onthemechange: (theme: Theme) => void;
     onclose: () => void;
   }
 
-  let { profiles, activeProfileId, theme, onchanged, onthemechange, onclose }: Props = $props();
+  let {
+    profiles,
+    activeProfileId,
+    avatarPackId,
+    theme,
+    onchanged,
+    onavatarchange,
+    onthemechange,
+    onclose,
+  }: Props = $props();
   function initialSelection() {
     return activeProfileId;
   }
   let selectedId = $state(initialSelection());
   let creating = $state(false);
-  let section = $state<'appearance' | 'models'>('appearance');
+  let section = $state<'appearance' | 'avatar' | 'models'>('appearance');
   let selected = $derived(profiles.find((profile) => profile.id === selectedId) ?? null);
 
   $effect(() => {
@@ -64,6 +77,17 @@
         <span>外观</span>
         <small>{theme === 'light' ? '浅色模式' : '深色模式'}</small>
       </button>
+      <button
+        type="button"
+        class:selected={section === 'avatar'}
+        onclick={() => {
+          section = 'avatar';
+          creating = false;
+        }}
+      >
+        <span>助手形象</span>
+        <small>{avatarPackId === 'female-assistant' ? '女性助手' : '机器人助手'}</small>
+      </button>
       <p class="nav-heading">模型配置</p>
       {#each profiles as profile (profile.id)}
         <button
@@ -98,6 +122,8 @@
     <div class="form-panel">
       {#if section === 'appearance'}
         <ThemeSettings {theme} {onthemechange} />
+      {:else if section === 'avatar'}
+        <AvatarSettings {avatarPackId} {onavatarchange} />
       {:else}
         {#key creating ? 'new' : selectedId}
           <ModelProfileForm
