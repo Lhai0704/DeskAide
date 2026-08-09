@@ -23,8 +23,8 @@ describe('avatar pack preferences', () => {
 
   it('loads a stored avatar and otherwise uses the default', () => {
     expect(loadAvatarPackId(storageWith('female-assistant'))).toBe('female-assistant');
-    expect(loadAvatarPackId(storageWith('unknown'))).toBe('default-assistant');
-    expect(loadAvatarPackId(storageWith(null))).toBe('default-assistant');
+    expect(loadAvatarPackId(storageWith('unknown'))).toBe('female-assistant');
+    expect(loadAvatarPackId(storageWith(null))).toBe('female-assistant');
   });
 
   it('persists the selected avatar', () => {

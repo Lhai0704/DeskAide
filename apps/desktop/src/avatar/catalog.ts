@@ -1,5 +1,6 @@
 export const AVATAR_PACK_STORAGE_KEY = 'deskaide.avatar-pack';
 export const AVATAR_PACK_CHANGED_EVENT = 'avatar-pack-changed';
+export const DEFAULT_AVATAR_PACK_ID = 'female-assistant' as const;
 
 export const AVATAR_PACKS = [
   {
@@ -34,9 +35,9 @@ export function loadAvatarPackId(
 ): AvatarPackId {
   try {
     const stored = storage?.getItem(AVATAR_PACK_STORAGE_KEY);
-    return isAvatarPackId(stored) ? stored : 'default-assistant';
+    return isAvatarPackId(stored) ? stored : DEFAULT_AVATAR_PACK_ID;
   } catch {
-    return 'default-assistant';
+    return DEFAULT_AVATAR_PACK_ID;
   }
 }
 
