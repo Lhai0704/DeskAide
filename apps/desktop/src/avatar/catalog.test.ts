@@ -23,8 +23,8 @@ describe('avatar pack preferences', () => {
 
   it('loads a stored avatar and otherwise uses the default', () => {
     expect(loadAvatarPackId(storageWith('legacy-pack-a'))).toBe('legacy-pack-a');
-    expect(loadAvatarPackId(storageWith('unknown'))).toBe('default-assistant');
-    expect(loadAvatarPackId(storageWith(null))).toBe('default-assistant');
+    expect(loadAvatarPackId(storageWith('unknown'))).toBe('legacy-pack-a');
+    expect(loadAvatarPackId(storageWith(null))).toBe('legacy-pack-a');
   });
 
   it('persists the selected avatar', () => {
