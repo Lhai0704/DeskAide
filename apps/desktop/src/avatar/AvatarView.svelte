@@ -12,6 +12,8 @@
     type AvatarPackId,
   } from './catalog';
   import { avatarAssetUrl, loadAvatarManifest } from './manifest';
+  import StaticAvatar from './renderers/StaticAvatar.svelte';
+  import VideoAvatar from './renderers/VideoAvatar.svelte';
   import type { AvatarPackManifest, AvatarStateName } from './types';
 
   let manifest: AvatarPackManifest | null = null;
@@ -79,11 +81,17 @@
 
 <button class="avatar" type="button" aria-label="打开 DeskAide" onpointerdown={onPointerDown}>
   {#if manifest}
-    <img
-      src={avatarAssetUrl(manifest, state, packRoot)}
-      alt={manifest.states[state].alt}
-      draggable="false"
-    />
+    {#if manifest.renderer === 'video'}
+      <VideoAvatar
+        src={avatarAssetUrl(manifest, state, packRoot)}
+        alt={manifest.states[state].alt}
+      />
+    {:else}
+      <StaticAvatar
+        src={avatarAssetUrl(manifest, state, packRoot)}
+        alt={manifest.states[state].alt}
+      />
+    {/if}
   {:else if error}
     <span class="fallback" title={error}>DA</span>
   {:else}
@@ -108,16 +116,7 @@
     cursor: grabbing;
   }
 
-  img {
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
-    pointer-events: none;
-    filter: drop-shadow(0 8px 9px rgb(7 16 29 / 30%));
-    transition: scale 120ms ease;
-  }
-
-  .avatar:hover img {
+  .avatar:hover :global(.avatar-media) {
     scale: 1.025;
   }
 

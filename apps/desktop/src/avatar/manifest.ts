@@ -26,8 +26,11 @@ export function avatarAssetUrl(
 
 export function assertManifest(value: unknown): asserts value is AvatarPackManifest {
   if (!isObject(value)) throw new Error('助手形象资源包 manifest 必须是对象');
-  if (value.schemaVersion !== 1) throw new Error('不支持的助手形象资源包 schemaVersion');
-  if (value.renderer !== 'static') throw new Error('第一阶段仅支持 static renderer');
+  const isStaticManifest = value.schemaVersion === 1 && value.renderer === 'static';
+  const isVideoManifest = value.schemaVersion === 2 && value.renderer === 'video';
+  if (!isStaticManifest && !isVideoManifest) {
+    throw new Error('不支持的助手形象资源包 schemaVersion 或 renderer');
+  }
 
   for (const key of ['id', 'name', 'version'] as const) {
     if (typeof value[key] !== 'string' || value[key].trim() === '') {
