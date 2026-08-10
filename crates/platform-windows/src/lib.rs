@@ -18,14 +18,18 @@ use uiautomation::{
 };
 use windows::{
     Win32::{
-        Foundation::{CloseHandle, HWND},
+        Foundation::{CloseHandle, HWND, LPARAM},
         System::Threading::{
             OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
             QueryFullProcessImageNameW,
         },
-        UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId},
+        UI::WindowsAndMessaging::{
+            EnumWindows, GW_OWNER, GWL_EXSTYLE, GetForegroundWindow, GetWindow, GetWindowLongW,
+            GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
+            WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+        },
     },
-    core::PWSTR,
+    core::{BOOL, PWSTR},
 };
 
 const PLATFORM: &str = "windows";
@@ -71,7 +75,7 @@ impl WindowsPlatformIntegration {
         let (reply, response) = oneshot::channel();
         self.sender
             .send(WorkerCommand::Text {
-                target_id: target.id.clone(),
+                target: target.clone(),
                 kind,
                 reply,
             })
@@ -93,6 +97,10 @@ impl PlatformIntegration for WindowsPlatformIntegration {
                 PlatformError::Integration("Windows accessibility worker is not running".to_owned())
             })?;
         receive_with_timeout(response, "get_last_active_window").await
+    }
+
+    async fn list_windows(&self) -> Result<Vec<TargetWindow>, PlatformError> {
+        enumerate_windows()
     }
 
     async fn get_selected_text(
@@ -147,7 +155,7 @@ enum WorkerCommand {
         reply: oneshot::Sender<Result<TargetWindow, PlatformError>>,
     },
     Text {
-        target_id: String,
+        target: TargetWindow,
         kind: TextRequestKind,
         reply: oneshot::Sender<Result<Option<String>, PlatformError>>,
     },
@@ -226,11 +234,11 @@ fn worker_loop(receiver: mpsc::Receiver<WorkerCommand>) {
                 let _ = reply.send(result);
             }
             WorkerCommand::Text {
-                target_id,
+                target,
                 kind,
                 reply,
             } => {
-                let result = collect_tracked_text(&automation, tracked.as_ref(), &target_id, kind);
+                let result = collect_target_text(&automation, tracked.as_ref(), &target, kind);
                 let _ = reply.send(result);
             }
         }
@@ -258,15 +266,24 @@ fn track_candidate(
     })
 }
 
-fn collect_tracked_text(
+fn collect_target_text(
     automation: &UIAutomation,
     tracked: Option<&TrackedWindow>,
-    target_id: &str,
+    target: &TargetWindow,
     kind: TextRequestKind,
 ) -> Result<Option<String>, PlatformError> {
-    let window = tracked
-        .filter(|window| window.target.id == target_id)
-        .ok_or_else(|| unavailable(kind.capability(), "本次激活的目标窗口已失效"))?;
+    let temporary;
+    let window = if let Some(window) = tracked.filter(|window| window.target.id == target.id) {
+        window
+    } else if matches!(kind, TextRequestKind::Accessible) {
+        temporary = track_candidate(automation, candidate_from_target(target)?)?;
+        &temporary
+    } else {
+        return Err(unavailable(
+            kind.capability(),
+            "助手激活前窗口中的选中文字已失效",
+        ));
+    };
     let text = match kind {
         TextRequestKind::Selected => selected_text(automation, window),
         TextRequestKind::Accessible => accessible_text(automation, window),
@@ -401,6 +418,43 @@ fn foreground_candidate() -> Option<WindowCandidate> {
         return None;
     }
 
+    Some(window_candidate(hwnd, process_id))
+}
+
+fn enumerate_windows() -> Result<Vec<TargetWindow>, PlatformError> {
+    unsafe extern "system" fn callback(hwnd: HWND, parameter: LPARAM) -> BOOL {
+        let windows = unsafe { &mut *(parameter.0 as *mut Vec<TargetWindow>) };
+        if !is_selectable_window(hwnd) {
+            return BOOL::from(true);
+        }
+        let mut process_id = 0;
+        unsafe { GetWindowThreadProcessId(hwnd, Some(&mut process_id)) };
+        if should_track_process(process_id, std::process::id()) {
+            windows.push(window_candidate(hwnd, process_id).target);
+        }
+        BOOL::from(true)
+    }
+
+    let mut windows = Vec::new();
+    unsafe { EnumWindows(Some(callback), LPARAM(&mut windows as *mut _ as isize)) }.map_err(
+        |error| PlatformError::Integration(format!("failed to enumerate windows: {error}")),
+    )?;
+    Ok(windows)
+}
+
+fn is_selectable_window(hwnd: HWND) -> bool {
+    if !unsafe { IsWindowVisible(hwnd) }.as_bool() || unsafe { GetWindowTextLengthW(hwnd) } <= 0 {
+        return false;
+    }
+    let extended_style = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) } as u32;
+    if extended_style & WS_EX_TOOLWINDOW.0 != 0 {
+        return false;
+    }
+    let has_owner = unsafe { GetWindow(hwnd, GW_OWNER) }.is_ok();
+    !has_owner || extended_style & WS_EX_APPWINDOW.0 != 0
+}
+
+fn window_candidate(hwnd: HWND, process_id: u32) -> WindowCandidate {
     let title = window_title(hwnd);
     let process_path = process_path(process_id);
     let process_name = process_path.as_ref().and_then(|path| {
@@ -416,7 +470,7 @@ fn foreground_candidate() -> Option<WindowCandidate> {
             .into_owned()
     });
     let hwnd_value = hwnd.0.addr() as isize;
-    Some(WindowCandidate {
+    WindowCandidate {
         hwnd: hwnd_value,
         process_id,
         target: TargetWindow {
@@ -425,6 +479,25 @@ fn foreground_candidate() -> Option<WindowCandidate> {
             process_name,
             title,
         },
+    }
+}
+
+fn candidate_from_target(target: &TargetWindow) -> Result<WindowCandidate, PlatformError> {
+    let value = target
+        .id
+        .strip_prefix("windows-hwnd:")
+        .and_then(|value| isize::from_str_radix(value, 16).ok())
+        .ok_or_else(|| unavailable("get_accessible_text", "目标窗口标识无效"))?;
+    let hwnd = HWND(value as *mut _);
+    let mut process_id = 0;
+    unsafe { GetWindowThreadProcessId(hwnd, Some(&mut process_id)) };
+    if process_id == 0 {
+        return Err(unavailable("get_accessible_text", "目标窗口已经关闭"));
+    }
+    Ok(WindowCandidate {
+        hwnd: value,
+        process_id,
+        target: target.clone(),
     })
 }
 

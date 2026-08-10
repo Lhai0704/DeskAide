@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   CONTEXT_OPTIONS,
   activeModel,
+  contextExcerpt,
   contextResultNote,
   contextUnavailableReason,
+  windowLabel,
   type ModelCapabilities,
   type ModelProfile,
   type TargetWindow,
@@ -72,5 +74,10 @@ describe('context capability presentation', () => {
         },
       ]),
     ).toBe('当前选中文字：已添加 12 字（已截断）；当前窗口文字：目标未公开文字');
+  });
+
+  it('creates stable labels and compact one-line context excerpts', () => {
+    expect(windowLabel(target)).toBe('Document');
+    expect(contextExcerpt(' first\n\nsecond   third ', 14)).toBe('first second t…');
   });
 });

@@ -2,7 +2,7 @@
 
 DeskAide 是一个常驻桌面的电子 AI 助手入口。当前版本提供 Windows 透明助手形象、可拖动双窗口、OpenAI-Compatible 文字模型和可替换的助手形象资源包。
 
-> 只有用户主动勾选文字上下文并发送时，DeskAide 才会读取本次激活前记录的外部窗口。当前版本不会读取屏幕、剪贴板或后台持续采集其他应用内容。
+> 只有用户主动选择窗口时，DeskAide 才会读取该窗口并生成可编辑的上下文草稿；“选中文字”仍只读取助手激活前的窗口。当前版本不会读取屏幕、剪贴板或后台持续采集其他应用内容。
 
 ## 当前功能
 
@@ -16,7 +16,9 @@ DeskAide 是一个常驻桌面的电子 AI 助手入口。当前版本提供 Win
 - 保留本地 Mock Provider，离线时仍可运行
 - 真正发送多轮文字历史，支持新建会话、停止生成和 Assistant 展开/收起
 - 从 Rust 读取模型能力，并明确禁用尚不可用的上下文选项
-- 记录 Assistant 激活前的 Windows 外部活动窗口
+- 枚举并多选当前可见的 Windows 外部窗口
+- 以摘要卡片展示窗口上下文，并在独立窗口中预览、修改
+- 保留 Assistant 激活前窗口的选中文字采集
 - 通过 UI Automation 尽力获取当前选中文字和窗口可访问文字
 - 按模型上下文窗口限制文字长度，采集失败时继续普通提问
 - `PlatformIntegration`、`ContextProvider` 和 `ModelProvider` 扩展边界
@@ -64,6 +66,8 @@ cargo test --workspace
 npm run tauri --workspace @deskaide/desktop -- build --debug --no-bundle
 ```
 
+也可以直接运行 `npm run build:debug`。该命令会生成不依赖本地 Vite 服务、可直接双击的 `target/debug/deskaide.exe`。`tauri dev` 使用的开发进程仍会连接 `http://localhost:1420`，不应把开发运行中的临时 EXE 当作独立版本。
+
 ## 项目结构
 
 ```text
@@ -81,8 +85,9 @@ docs/                      架构、资源格式和已知限制
 
 ## 隐私边界
 
-- 激活时只记录外部窗口元数据和 UI Automation 元素引用，不读取其文字。
-- 只有用户勾选“当前选中文字”或“当前窗口文字”并发送后，才读取对应文字。
+- 激活时只为“选中文字”记录前一窗口的元数据和 UI Automation 元素引用，不读取其文字。
+- 用户在上下文选择器中明确添加窗口后，才读取该窗口文字并生成可编辑草稿；发送时使用用户最终确认的草稿内容。
+- “选中文字”仍在用户勾选并发送后读取，行为保持不变。
 - API Key 不进入 Tauri Store，后端也不通过 IPC 返回明文；前端只能读取“已设置/未设置”。
 - `Authorization`、Cookie、Token、Secret 等敏感自定义 Header 会被拒绝。
 - 未实现 OCR、持续截图、活动历史、语音、Agent 或电脑操作。

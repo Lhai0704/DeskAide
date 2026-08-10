@@ -9,6 +9,7 @@
     "dev": "npm run dev --workspace @deskaide/desktop",
     "tauri": "npm run tauri --workspace @deskaide/desktop --",
     "build": "npm run build --workspace @deskaide/desktop",
+    "build:debug": "npm run build:debug --workspace @deskaide/desktop",
     "check": "npm run check --workspace @deskaide/desktop",
     "lint": "npm run lint --workspace @deskaide/desktop",
     "format": "npm run format --workspace @deskaide/desktop",
@@ -20,4 +21,3 @@
     "npm": ">=11.0.0"
   }
 }
-
