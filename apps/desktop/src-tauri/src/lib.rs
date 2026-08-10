@@ -1,3 +1,4 @@
+mod conversation_history;
 mod credentials;
 mod model_profiles;
 mod positioning;
@@ -60,6 +61,7 @@ struct AppState {
     editing_context: Mutex<Option<WindowContextDraft>>,
     movement: Mutex<MovementState>,
     active_request: Arc<Mutex<Option<ActiveRequest>>>,
+    history_lock: Mutex<()>,
     /// When true, assistant stays always-on-top and does not hide on blur.
     assistant_pinned: AtomicBool,
     /// Suppress blur-hide while the user is interacting with the avatar (click/drag).
@@ -144,10 +146,76 @@ impl AppState {
             editing_context: Mutex::new(None),
             movement: Mutex::new(MovementState::default()),
             active_request: Arc::new(Mutex::new(None)),
+            history_lock: Mutex::new(()),
             assistant_pinned: AtomicBool::new(false),
             avatar_interacting: AtomicBool::new(false),
         }
     }
+}
+
+#[tauri::command]
+fn list_conversation_summaries(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Vec<conversation_history::ConversationSummary>, String> {
+    let _history_guard = state
+        .history_lock
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    conversation_history::list(&app)
+}
+
+#[tauri::command]
+fn load_conversation(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    conversation_id: String,
+) -> Result<Option<conversation_history::ConversationRecord>, String> {
+    let _history_guard = state
+        .history_lock
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    conversation_history::get(&app, &conversation_id)
+}
+
+#[tauri::command]
+fn save_conversation(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    conversation: conversation_history::SaveConversationInput,
+) -> Result<conversation_history::ConversationRecord, String> {
+    let _history_guard = state
+        .history_lock
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    conversation_history::save(&app, conversation)
+}
+
+#[tauri::command]
+fn rename_conversation(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    conversation_id: String,
+    title: String,
+) -> Result<conversation_history::ConversationSummary, String> {
+    let _history_guard = state
+        .history_lock
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    conversation_history::rename(&app, &conversation_id, &title)
+}
+
+#[tauri::command]
+fn delete_conversation(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    conversation_id: String,
+) -> Result<bool, String> {
+    let _history_guard = state
+        .history_lock
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    conversation_history::delete(&app, &conversation_id)
 }
 
 #[tauri::command]
@@ -1211,7 +1279,12 @@ pub fn run() {
             close_context_editor,
             submit_model_request,
             stop_generation,
-            set_assistant_expanded
+            set_assistant_expanded,
+            list_conversation_summaries,
+            load_conversation,
+            save_conversation,
+            rename_conversation,
+            delete_conversation
         ])
         .on_window_event(|window, event| {
             match event {

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { emitTo, listen } from '@tauri-apps/api/event';
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import {
     AVATAR_PACK_CHANGED_EVENT,
@@ -11,7 +11,14 @@
   } from '../avatar/catalog';
   import ModelSettings from '../settings/ModelSettings.svelte';
   import { loadTheme, saveTheme, type Theme } from '../settings/theme';
-  import { buildModelMessages, type ConversationMessage } from './conversation';
+  import {
+    buildModelMessages,
+    hasSavableConversation,
+    responseToConversationMessage,
+    type ConversationMessage,
+    type ConversationRecord,
+    type SaveConversationInput,
+  } from './conversation';
   import {
     initialResponseState,
     reduceResponseEvent,
@@ -33,6 +40,7 @@
     type TargetWindow,
     type WindowContextDraft,
   } from './model';
+  import HistoryDrawer from './HistoryDrawer.svelte';
 
   let prompt = '';
   let responseState: ResponseState = initialResponseState();
@@ -43,11 +51,14 @@
   let pinned = false;
   let contextOpen = false;
   let settingsOpen = false;
+  let historyOpen = false;
   let theme: Theme = loadTheme();
   let avatarPackId: AvatarPackId = loadAvatarPackId();
   let bootstrap: AssistantBootstrap | null = null;
   let activeModelProfileId = '';
-  let conversationId = createId();
+  let conversationId: string = createId();
+  let historySaveError = '';
+  let modelRestoreWarning = '';
   let bootstrapError = '';
   let contextWarning = '';
   let activeTarget: TargetWindow | null = null;
@@ -58,6 +69,8 @@
   let collectingWindows = false;
   let contextActionError = '';
   let textarea: HTMLTextAreaElement;
+  let conversationElement: HTMLElement;
+  let historySaveQueue: Promise<void> = Promise.resolve();
   const ignoredRequestIds = new SvelteSet<string>();
   const selectedContextSources = new SvelteSet<ContextSourceId>();
   const selectedWindowIds = new SvelteSet<string>();
@@ -75,7 +88,8 @@
         }
         return;
       }
-      responseState = reduceResponseEvent(responseState, payload);
+      const nextResponseState = reduceResponseEvent(responseState, payload);
+      responseState = nextResponseState;
       if (
         payload.type === 'completed' ||
         payload.type === 'failed' ||
@@ -83,6 +97,9 @@
       ) {
         pending = false;
         stopping = false;
+        void finalizeResponse(nextResponseState);
+      } else {
+        void scrollConversationToBottom();
       }
     });
     const unlistenShown = listen<AssistantShownPayload>('assistant-shown', ({ payload }) => {
@@ -124,35 +141,48 @@
     return bootstrap?.modelProfiles.find((profile) => profile.id === activeModelProfileId) ?? null;
   }
 
-  function archiveCurrentResponse() {
-    if (!responseState.content) return;
-    messages = [
-      ...messages,
-      {
-        id: createId(),
-        role: 'assistant',
-        content: responseState.content,
-        note:
-          responseState.status === 'cancelled'
-            ? '已停止'
-            : responseState.status === 'failed'
-              ? `生成失败：${responseState.error}`
-              : undefined,
-      },
-    ];
+  async function persistConversation() {
+    if (!hasSavableConversation(messages) || !activeModelProfileId) return;
+    const savedConversationId = conversationId;
+    const conversation: SaveConversationInput = {
+      id: savedConversationId,
+      title: null,
+      modelProfileId: activeModelProfileId,
+      messages,
+    };
+    const saveTask = historySaveQueue.then(async () => {
+      try {
+        await invoke<ConversationRecord>('save_conversation', { conversation });
+        if (conversationId === savedConversationId) historySaveError = '';
+      } catch (cause) {
+        if (conversationId === savedConversationId) {
+          historySaveError = cause instanceof Error ? cause.message : String(cause);
+        }
+      }
+    });
+    historySaveQueue = saveTask;
+    await saveTask;
+  }
+
+  async function finalizeResponse(response: ResponseState) {
+    const message = responseToConversationMessage(response, createId());
+    if (message) messages = [...messages, message];
+    responseState = initialResponseState();
+    await persistConversation();
+    await scrollConversationToBottom();
   }
 
   async function submit() {
     const value = prompt.trim();
     if (!value || pending || !activeModelProfileId) return;
 
-    archiveCurrentResponse();
     const userMessageId = createId();
     messages = [...messages, { id: userMessageId, role: 'user', content: value }];
     prompt = '';
     pending = true;
     contextResults = [];
     responseState = initialResponseState();
+    await persistConversation();
     try {
       const result = await invoke<SubmitModelRequestResult>('submit_model_request', {
         conversationId,
@@ -168,17 +198,20 @@
         messages = messages.map((message) =>
           message.id === userMessageId ? { ...message, note } : message,
         );
+        await persistConversation();
       }
       if (!responseState.requestId)
         responseState = { ...responseState, requestId: result.requestId };
     } catch (cause) {
       pending = false;
-      responseState = {
+      const failedResponse: ResponseState = {
         requestId: null,
         content: '',
         status: 'failed',
         error: cause instanceof Error ? cause.message : String(cause),
       };
+      responseState = failedResponse;
+      await finalizeResponse(failedResponse);
     }
   }
 
@@ -201,10 +234,12 @@
   }
 
   async function newConversation() {
-    if (pending && responseState.requestId) {
-      ignoredRequestIds.add(responseState.requestId);
-      await stop();
-    }
+    if (pending && !responseState.requestId) return;
+    await interruptActiveGeneration();
+    resetToBlankConversation();
+  }
+
+  function resetToBlankConversation() {
     messages = [];
     responseState = initialResponseState();
     contextResults = [];
@@ -213,7 +248,112 @@
     windowContexts = [];
     prompt = '';
     conversationId = createId();
+    historySaveError = '';
+    modelRestoreWarning = '';
     window.setTimeout(() => textarea?.focus(), 0);
+  }
+
+  async function interruptActiveGeneration() {
+    if (!pending || !responseState.requestId) return;
+    const requestId = responseState.requestId;
+    ignoredRequestIds.add(requestId);
+    const cancelledResponse: ResponseState = { ...responseState, status: 'cancelled', error: '' };
+    pending = false;
+    stopping = false;
+    const message = responseToConversationMessage(cancelledResponse, createId());
+    if (message) messages = [...messages, message];
+    responseState = initialResponseState();
+    await persistConversation();
+    try {
+      await invoke<boolean>('stop_generation', { requestId });
+    } catch (cause) {
+      modelRestoreWarning = `停止生成失败：${cause instanceof Error ? cause.message : String(cause)}`;
+    }
+  }
+
+  async function openHistory() {
+    if (!expanded) {
+      await invoke('set_assistant_expanded', { expanded: true });
+      expanded = true;
+    }
+    contextOpen = false;
+    settingsOpen = false;
+    historyOpen = true;
+  }
+
+  async function selectHistoryConversation(selectedConversationId: string) {
+    if (selectedConversationId === conversationId) {
+      historyOpen = false;
+      await scrollConversationToBottom();
+      window.setTimeout(() => textarea?.focus(), 0);
+      return;
+    }
+    if (pending && !responseState.requestId) {
+      throw new Error('模型请求正在准备，请稍后再切换对话');
+    }
+    const record = await invoke<ConversationRecord | null>('load_conversation', {
+      conversationId: selectedConversationId,
+    });
+    if (!record) throw new Error('这条历史对话已不存在');
+
+    await interruptActiveGeneration();
+    messages = record.messages;
+    conversationId = record.id;
+    resetTransientConversationState();
+    historySaveError = '';
+    modelRestoreWarning = '';
+    await restoreConversationModel(record.modelProfileId);
+    historyOpen = false;
+    await scrollConversationToBottom();
+    window.setTimeout(() => textarea?.focus(), 0);
+  }
+
+  async function restoreConversationModel(modelProfileId: string) {
+    if (modelProfileId === activeModelProfileId) return;
+    const profileExists = bootstrap?.modelProfiles.some((profile) => profile.id === modelProfileId);
+    if (!profileExists) {
+      modelRestoreWarning = '原对话使用的模型已不存在，已保留当前模型。';
+      return;
+    }
+    try {
+      await invoke('set_active_model_profile', { profileId: modelProfileId });
+      activeModelProfileId = modelProfileId;
+      if (bootstrap) bootstrap = { ...bootstrap, activeModelProfileId: modelProfileId };
+    } catch (cause) {
+      modelRestoreWarning = `无法恢复原模型，已保留当前模型：${
+        cause instanceof Error ? cause.message : String(cause)
+      }`;
+    }
+  }
+
+  async function deleteHistoryConversation(deletedConversationId: string) {
+    if (deletedConversationId === conversationId) {
+      if (pending && !responseState.requestId) {
+        throw new Error('模型请求正在准备，请稍后再删除当前对话');
+      }
+      await interruptActiveGeneration();
+    }
+    await historySaveQueue;
+    await invoke<boolean>('delete_conversation', { conversationId: deletedConversationId });
+    if (deletedConversationId === conversationId) resetToBlankConversation();
+  }
+
+  function resetTransientConversationState() {
+    responseState = initialResponseState();
+    pending = false;
+    stopping = false;
+    contextResults = [];
+    selectedContextSources.clear();
+    selectedWindowIds.clear();
+    windowContexts = [];
+    availableWindows = [];
+    contextActionError = '';
+    prompt = '';
+  }
+
+  async function scrollConversationToBottom() {
+    await tick();
+    if (conversationElement) conversationElement.scrollTop = conversationElement.scrollHeight;
   }
 
   async function toggleExpanded() {
@@ -234,6 +374,7 @@
       expanded = true;
     }
     contextOpen = false;
+    historyOpen = false;
     settingsOpen = true;
   }
 
@@ -266,13 +407,22 @@
   function onKeyDown(event: KeyboardEvent) {
     if (event.key === 'Escape') {
       event.preventDefault();
+      if (historyOpen) {
+        historyOpen = false;
+        return;
+      }
       if (settingsOpen) {
         settingsOpen = false;
         return;
       }
       contextOpen = false;
       void invoke('hide_assistant');
-    } else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+    } else if (
+      !historyOpen &&
+      !settingsOpen &&
+      event.key === 'Enter' &&
+      (event.ctrlKey || event.metaKey)
+    ) {
       event.preventDefault();
       void submit();
     }
@@ -372,8 +522,13 @@
       <h1>DeskAide</h1>
     </div>
     <div class="header-actions">
-      <button class="icon-button" type="button" title="新建会话" onclick={newConversation}
-        >＋</button
+      <button class="icon-button" type="button" title="历史对话" onclick={openHistory}>◷</button>
+      <button
+        class="icon-button"
+        type="button"
+        title="新建会话"
+        disabled={pending && !responseState.requestId}
+        onclick={newConversation}>＋</button
       >
       <button class="icon-button" type="button" title="设置" onclick={openSettings}>⚙</button>
       <button
@@ -484,12 +639,18 @@
     <span class="privacy-note">仅在主动选择后采集</span>
   </section>
 
-  <section class="conversation" aria-live="polite">
+  <section class="conversation" aria-live="polite" bind:this={conversationElement}>
     {#if bootstrapError}
       <p class="system-error">模型信息加载失败：{bootstrapError}</p>
     {/if}
     {#if contextWarning}
       <p class="system-status">窗口上下文暂不可用：{contextWarning}</p>
+    {/if}
+    {#if modelRestoreWarning}
+      <p class="system-status">{modelRestoreWarning}</p>
+    {/if}
+    {#if historySaveError}
+      <p class="system-error">历史对话保存失败：{historySaveError}</p>
     {/if}
     {#if contextResults.length > 0}
       <div class="context-results">
@@ -599,6 +760,15 @@
       onclose={() => (settingsOpen = false)}
     />
   {/if}
+
+  {#if historyOpen}
+    <HistoryDrawer
+      activeConversationId={conversationId}
+      onselect={selectHistoryConversation}
+      ondelete={deleteHistoryConversation}
+      onclose={() => (historyOpen = false)}
+    />
+  {/if}
 </main>
 
 <style>
@@ -666,6 +836,11 @@
   .icon-button:hover {
     color: var(--theme-text-strong);
     background: var(--theme-control-hover);
+  }
+
+  .icon-button:disabled {
+    cursor: default;
+    opacity: 0.45;
   }
 
   .icon-button.pinned {
