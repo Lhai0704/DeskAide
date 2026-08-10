@@ -34,6 +34,12 @@ export interface TargetWindow {
   title: string | null;
 }
 
+export interface WindowContextDraft {
+  id: string;
+  target: TargetWindow;
+  content: string;
+}
+
 export interface AssistantShownPayload {
   target: TargetWindow | null;
   warning: string | null;
@@ -67,6 +73,15 @@ export interface ContextCollectionResult {
 export interface SubmitModelRequestResult {
   requestId: string;
   contextResults: ContextCollectionResult[];
+}
+
+export function windowLabel(target: TargetWindow): string {
+  return target.title || target.applicationName || target.processName || '外部窗口';
+}
+
+export function contextExcerpt(content: string, maxLength = 72): string {
+  const normalized = content.replace(/\s+/g, ' ').trim();
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}…` : normalized;
 }
 
 export const CONTEXT_OPTIONS: ContextOption[] = [

@@ -26,7 +26,7 @@ Tauri 在启动时创建 `avatar` 和 `assistant` 两个窗口。Assistant 默�
 ```text
 Assistant 输入
   → submit_model_request（完整内存会话历史）
-  → 按用户本次选择采集文字上下文
+  → 按用户本次选择加入已确认的窗口文字草稿，并按需采集激活前选中文字
   → 按模型上下文窗口限制长度
   → 读取当前 ModelProfile
   → 按 Profile 从 CredentialStore 取得 API Key
@@ -56,4 +56,4 @@ Assistant 支持 420×460 的紧凑模式和最大 720×720 的展开模式。Ru
 
 ## 平台扩展
 
-当前只有 `platform-windows` 实现外部窗口追踪、选中文字和可访问文字。UI Automation 在专用 COM 工作线程执行并设置三秒超时；截图方法仍明确返回 `Unsupported`。未来新增平台时创建独立 crate，实现 `PlatformIntegration`，并在各自构建目标的组合入口注入。
+当前只有 `platform-windows` 实现可见窗口枚举、外部窗口追踪、选中文字和指定窗口的可访问文字。UI Automation 在专用 COM 工作线程执行并为单次采集设置三秒超时；截图方法仍明确返回 `Unsupported`。未来新增平台时创建独立 crate，实现 `PlatformIntegration`，并在各自构建目标的组合入口注入。

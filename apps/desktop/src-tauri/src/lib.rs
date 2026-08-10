@@ -37,6 +37,7 @@ use deskaide_platform_windows::WindowsPlatformIntegration;
 
 const AVATAR_LABEL: &str = "avatar";
 const ASSISTANT_LABEL: &str = "assistant";
+const CONTEXT_EDITOR_LABEL: &str = "context-editor";
 const SETTINGS_FILE: &str = "settings.json";
 const POSITION_KEY: &str = "avatarPosition";
 const MODEL_PROFILES_KEY: &str = "modelProfiles";
@@ -56,6 +57,7 @@ struct AppState {
     selected_text_provider: Arc<dyn ContextProvider>,
     active_window_text_provider: Arc<dyn ContextProvider>,
     context_target: Mutex<Option<TargetWindow>>,
+    editing_context: Mutex<Option<WindowContextDraft>>,
     movement: Mutex<MovementState>,
     active_request: Arc<Mutex<Option<ActiveRequest>>>,
     /// When true, assistant stays always-on-top and does not hide on blur.
@@ -108,6 +110,14 @@ struct SubmitModelRequestResult {
     context_results: Vec<ContextCollectionResult>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct WindowContextDraft {
+    id: String,
+    target: TargetWindow,
+    content: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SavedAvatarPosition {
@@ -131,6 +141,7 @@ impl AppState {
             )),
             platform,
             context_target: Mutex::new(None),
+            editing_context: Mutex::new(None),
             movement: Mutex::new(MovementState::default()),
             active_request: Arc::new(Mutex::new(None)),
             assistant_pinned: AtomicBool::new(false),
@@ -314,9 +325,7 @@ async fn toggle_assistant(app: AppHandle, state: State<'_, AppState>) -> Result<
             }
         };
         let pinned = state.assistant_pinned.load(Ordering::SeqCst);
-        assistant
-            .set_always_on_top(pinned)
-            .map_err(display_error)?;
+        assistant.set_always_on_top(pinned).map_err(display_error)?;
         position_assistant(&app)?;
         assistant.show().map_err(display_error)?;
         assistant.set_focus().map_err(display_error)?;
@@ -354,7 +363,9 @@ fn set_assistant_pinned(
 
 #[tauri::command]
 fn set_avatar_interacting(app: AppHandle, state: State<'_, AppState>, interacting: bool) {
-    state.avatar_interacting.store(interacting, Ordering::SeqCst);
+    state
+        .avatar_interacting
+        .store(interacting, Ordering::SeqCst);
     if interacting {
         return;
     }
@@ -379,12 +390,104 @@ fn set_avatar_interacting(app: AppHandle, state: State<'_, AppState>, interactin
 }
 
 #[tauri::command]
+async fn list_available_windows(state: State<'_, AppState>) -> Result<Vec<TargetWindow>, String> {
+    state.platform.list_windows().await.map_err(display_error)
+}
+
+#[tauri::command]
+async fn collect_window_context(
+    state: State<'_, AppState>,
+    target: TargetWindow,
+) -> Result<WindowContextDraft, String> {
+    let payload = state
+        .active_window_text_provider
+        .collect(&ContextRequest {
+            target: target.clone(),
+            sources: vec![ContextSourceType::ActiveWindowText],
+        })
+        .await
+        .map_err(display_error)?;
+    let content = payload
+        .main_text
+        .filter(|text| !text.trim().is_empty())
+        .ok_or_else(|| "该窗口没有公开可读取的文字内容".to_owned())?;
+    Ok(WindowContextDraft {
+        id: Uuid::new_v4().to_string(),
+        target,
+        content,
+    })
+}
+
+#[tauri::command]
+fn open_context_editor(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    draft: WindowContextDraft,
+) -> Result<(), String> {
+    *state
+        .editing_context
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = Some(draft.clone());
+    let editor = get_window(&app, CONTEXT_EDITOR_LABEL)?;
+    editor.show().map_err(display_error)?;
+    editor.set_focus().map_err(display_error)?;
+    editor
+        .emit("context-editor-opened", draft)
+        .map_err(display_error)
+}
+
+#[tauri::command]
+fn get_context_editor_draft(state: State<'_, AppState>) -> Option<WindowContextDraft> {
+    state
+        .editing_context
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .clone()
+}
+
+#[tauri::command]
+fn save_context_editor_draft(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    draft: WindowContextDraft,
+) -> Result<(), String> {
+    if draft.content.trim().is_empty() {
+        return Err("上下文内容不能为空".to_owned());
+    }
+    *state
+        .editing_context
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = Some(draft.clone());
+    app.emit_to(ASSISTANT_LABEL, "context-draft-updated", draft)
+        .map_err(display_error)?;
+    close_context_editor(app, state)
+}
+
+#[tauri::command]
+fn close_context_editor(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    *state
+        .editing_context
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = None;
+    get_window(&app, CONTEXT_EDITOR_LABEL)?
+        .hide()
+        .map_err(display_error)?;
+    if let Ok(assistant) = get_window(&app, ASSISTANT_LABEL)
+        && assistant.is_visible().unwrap_or(false)
+    {
+        let _ = assistant.set_focus();
+    }
+    Ok(())
+}
+
+#[tauri::command]
 async fn submit_model_request(
     app: AppHandle,
     state: State<'_, AppState>,
     conversation_id: String,
     messages: Vec<ModelMessage>,
     context_sources: Vec<ContextSourceType>,
+    window_contexts: Vec<WindowContextDraft>,
 ) -> Result<SubmitModelRequestResult, String> {
     if !messages.iter().any(|message| {
         matches!(message.role, deskaide_assistant_core::MessageRole::User)
@@ -414,6 +517,7 @@ async fn submit_model_request(
         &state,
         target.as_ref(),
         &context_sources,
+        &window_contexts,
         profile.capabilities.supports_text,
         context_char_budget(profile.capabilities.context_window),
     )
@@ -505,6 +609,7 @@ async fn collect_context(
     state: &AppState,
     target: Option<&TargetWindow>,
     requested: &[ContextSourceType],
+    window_contexts: &[WindowContextDraft],
     supports_text: bool,
     mut remaining_chars: usize,
 ) -> (Vec<ContextPayload>, Vec<ContextCollectionResult>) {
@@ -632,7 +737,81 @@ async fn collect_context(
         }
     }
 
+    if supports_text {
+        for draft in window_contexts {
+            let content = draft.content.trim();
+            if content.is_empty() {
+                results.push(context_result(
+                    ContextSourceType::ActiveWindowText,
+                    ContextCollectionStatus::Unavailable,
+                    0,
+                    false,
+                    format!("{}：内容为空，已跳过", window_context_label(draft)),
+                ));
+                continue;
+            }
+            if remaining_chars == 0 {
+                results.push(context_result(
+                    ContextSourceType::ActiveWindowText,
+                    ContextCollectionStatus::Unavailable,
+                    0,
+                    true,
+                    format!("{}：上下文预算已用完", window_context_label(draft)),
+                ));
+                continue;
+            }
+            let (text, truncated) = truncate_chars(content, remaining_chars);
+            let character_count = text.chars().count();
+            remaining_chars = remaining_chars.saturating_sub(character_count);
+            let mut warnings = Vec::new();
+            if truncated {
+                warnings.push("文字已按当前模型的上下文预算截断".to_owned());
+            }
+            payloads.push(ContextPayload {
+                source_type: ContextSourceType::ActiveWindowText,
+                application_name: draft.target.application_name.clone(),
+                process_name: draft.target.process_name.clone(),
+                window_title: draft.target.title.clone(),
+                url: None,
+                selected_text: None,
+                main_text: Some(text),
+                metadata: serde_json::json!({ "draftId": draft.id, "edited": true }),
+                images: Vec::new(),
+                warnings,
+            });
+            results.push(context_result(
+                ContextSourceType::ActiveWindowText,
+                ContextCollectionStatus::Added,
+                character_count,
+                truncated,
+                if truncated {
+                    format!("{}：已添加，内容已截断", window_context_label(draft))
+                } else {
+                    format!("{}：已添加", window_context_label(draft))
+                },
+            ));
+        }
+    } else if !window_contexts.is_empty() {
+        results.push(context_result(
+            ContextSourceType::ActiveWindowText,
+            ContextCollectionStatus::Unavailable,
+            0,
+            false,
+            "当前模型不支持文字上下文",
+        ));
+    }
+
     (payloads, results)
+}
+
+fn window_context_label(draft: &WindowContextDraft) -> &str {
+    draft
+        .target
+        .title
+        .as_deref()
+        .or(draft.target.application_name.as_deref())
+        .or(draft.target.process_name.as_deref())
+        .unwrap_or("窗口")
 }
 
 fn context_char_budget(context_window: Option<u64>) -> usize {
@@ -976,6 +1155,11 @@ fn handle_assistant_blur(app: &AppHandle) {
         if assistant.is_focused().unwrap_or(false) {
             return;
         }
+        if let Ok(editor) = get_window(&app, CONTEXT_EDITOR_LABEL)
+            && editor.is_visible().unwrap_or(false)
+        {
+            return;
+        }
         if assistant.is_visible().unwrap_or(false)
             && let Err(error) = assistant.hide()
         {
@@ -1019,6 +1203,12 @@ pub fn run() {
             hide_assistant,
             set_assistant_pinned,
             set_avatar_interacting,
+            list_available_windows,
+            collect_window_context,
+            open_context_editor,
+            get_context_editor_draft,
+            save_context_editor_draft,
+            close_context_editor,
             submit_model_request,
             stop_generation,
             set_assistant_expanded

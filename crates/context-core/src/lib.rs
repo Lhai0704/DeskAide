@@ -81,6 +81,8 @@ pub trait ContextProvider: Send + Sync {
 pub trait PlatformIntegration: Send + Sync {
     async fn get_last_active_window(&self) -> Result<TargetWindow, PlatformError>;
 
+    async fn list_windows(&self) -> Result<Vec<TargetWindow>, PlatformError>;
+
     async fn get_selected_text(
         &self,
         target: &TargetWindow,
@@ -243,6 +245,10 @@ mod tests {
     impl PlatformIntegration for FakePlatform {
         async fn get_last_active_window(&self) -> Result<TargetWindow, PlatformError> {
             unreachable!()
+        }
+
+        async fn list_windows(&self) -> Result<Vec<TargetWindow>, PlatformError> {
+            Ok(vec![target()])
         }
 
         async fn get_selected_text(

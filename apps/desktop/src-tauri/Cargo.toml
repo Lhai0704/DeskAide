@@ -10,6 +10,10 @@ description = "DeskAide Windows desktop assistant"
 name = "deskaide_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
 [[bin]]
 name = "deskaide"
 path = "src/main.rs"

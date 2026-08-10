@@ -45,6 +45,22 @@
         "skipTaskbar": true,
         "shadow": true,
         "visible": false
+      },
+      {
+        "label": "context-editor",
+        "title": "编辑窗口上下文 - DeskAide",
+        "url": "index.html",
+        "width": 680,
+        "height": 600,
+        "minWidth": 480,
+        "minHeight": 420,
+        "resizable": true,
+        "decorations": true,
+        "transparent": false,
+        "alwaysOnTop": false,
+        "skipTaskbar": false,
+        "shadow": true,
+        "visible": false
       }
     ],
     "security": {
