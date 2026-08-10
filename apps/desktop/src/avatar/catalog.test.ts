@@ -18,13 +18,14 @@ describe('avatar pack preferences', () => {
   it('accepts only avatars in the catalog', () => {
     expect(isAvatarPackId('default-assistant')).toBe(true);
     expect(isAvatarPackId('legacy-pack-a')).toBe(true);
+    expect(isAvatarPackId('legacy-pack-b')).toBe(true);
     expect(isAvatarPackId('unknown')).toBe(false);
   });
 
   it('loads a stored avatar and otherwise uses the default', () => {
     expect(loadAvatarPackId(storageWith('legacy-pack-a'))).toBe('legacy-pack-a');
-    expect(loadAvatarPackId(storageWith('unknown'))).toBe('legacy-pack-a');
-    expect(loadAvatarPackId(storageWith(null))).toBe('legacy-pack-a');
+    expect(loadAvatarPackId(storageWith('unknown'))).toBe('legacy-pack-b');
+    expect(loadAvatarPackId(storageWith(null))).toBe('legacy-pack-b');
   });
 
   it('persists the selected avatar', () => {
@@ -37,5 +38,8 @@ describe('avatar pack preferences', () => {
 
   it('resolves catalog metadata', () => {
     expect(avatarPackById('legacy-pack-a').root).toBe('/avatars/legacy-pack-a');
+    expect(avatarPackById('legacy-pack-b').root).toBe(
+      '/avatars/legacy-pack-b',
+    );
   });
 });

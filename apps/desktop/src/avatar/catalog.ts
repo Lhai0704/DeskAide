@@ -1,6 +1,6 @@
 export const AVATAR_PACK_STORAGE_KEY = 'deskaide.avatar-pack';
 export const AVATAR_PACK_CHANGED_EVENT = 'avatar-pack-changed';
-export const DEFAULT_AVATAR_PACK_ID = 'legacy-pack-a' as const;
+export const DEFAULT_AVATAR_PACK_ID = 'legacy-pack-b' as const;
 
 export const AVATAR_PACKS = [
   {
@@ -14,6 +14,12 @@ export const AVATAR_PACKS = [
     name: '备用助手',
     description: '静态备用形象',
     root: '/avatars/legacy-pack-a',
+  },
+  {
+    id: 'legacy-pack-b',
+    name: '备用助手',
+    description: '静态备用形象',
+    root: '/avatars/legacy-pack-b',
   },
 ] as const;
 
