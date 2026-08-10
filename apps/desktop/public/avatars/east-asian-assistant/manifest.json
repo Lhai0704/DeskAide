@@ -8,11 +8,11 @@
   "defaultHeight": 160,
   "states": {
     "idle": {
-      "asset": "idle.webm",
+      "asset": "idle-sequence.webm",
       "alt": "DeskAide 东亚女性助手"
     },
     "activated": {
-      "asset": "idle.webm",
+      "asset": "idle-sequence.webm",
       "alt": "DeskAide 东亚女性助手已激活"
     }
   }
