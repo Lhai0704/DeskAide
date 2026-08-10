@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { buildModelMessages, type ConversationMessage } from './conversation';
+import {
+  buildModelMessages,
+  hasSavableConversation,
+  responseToConversationMessage,
+  type ConversationMessage,
+} from './conversation';
 
 describe('model conversation assembly', () => {
   it('preserves the complete multi-turn role order', () => {
@@ -22,5 +27,39 @@ describe('model conversation assembly', () => {
         { id: '2', role: 'user', content: 'hello', note: 'UI only' },
       ]),
     ).toEqual([{ role: 'user', content: [{ type: 'text', text: 'hello' }] }]);
+  });
+
+  it('only persists conversations after a real user message exists', () => {
+    expect(hasSavableConversation([])).toBe(false);
+    expect(hasSavableConversation([{ id: '1', role: 'assistant', content: 'welcome' }])).toBe(
+      false,
+    );
+    expect(hasSavableConversation([{ id: '2', role: 'user', content: ' hello ' }])).toBe(true);
+  });
+
+  it('archives completed, stopped, and failed responses for history', () => {
+    expect(
+      responseToConversationMessage(
+        { requestId: '1', content: 'done', status: 'completed', error: '' },
+        'answer',
+      ),
+    ).toEqual({ id: 'answer', role: 'assistant', content: 'done', note: undefined });
+    expect(
+      responseToConversationMessage(
+        { requestId: '2', content: 'partial', status: 'cancelled', error: '' },
+        'stopped',
+      ),
+    ).toEqual({ id: 'stopped', role: 'assistant', content: 'partial', note: '已停止' });
+    expect(
+      responseToConversationMessage(
+        { requestId: '3', content: '', status: 'failed', error: 'offline' },
+        'failed',
+      ),
+    ).toEqual({
+      id: 'failed',
+      role: 'assistant',
+      content: '',
+      note: '生成失败：offline',
+    });
   });
 });

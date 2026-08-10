@@ -25,7 +25,7 @@ Tauri 在启动时创建 `avatar` 和 `assistant` 两个窗口。Assistant 默�
 
 ```text
 Assistant 输入
-  → submit_model_request（完整内存会话历史）
+  → submit_model_request（当前所选对话的完整文字历史）
   → 按用户本次选择加入已确认的窗口文字草稿，并按需采集激活前选中文字
   → 按模型上下文窗口限制长度
   → 读取当前 ModelProfile
@@ -50,7 +50,11 @@ Assistant 输入
 
 Rust 通过 `get_assistant_bootstrap` 暴露当前模型 Profile 和 `ModelCapabilities`，通过 `assistant-shown` 暴露本次外部目标。Svelte 只在目标存在时启用选中文字和窗口文字，并展示每项的成功、不可用、失败或截断结果；网页和图片项继续显示明确的未实现原因。
 
-每次请求都注册唯一请求 ID 和可取消任务句柄。`stop_generation` 仅取消匹配的活动请求，并发送 `Cancelled` 事件；前端 reducer 会忽略其他请求的迟到事件。会话目前只存在于 Assistant 窗口内存中，但每次请求会按原角色顺序发送当前完整文字历史。
+每次请求都注册唯一请求 ID 和可取消任务句柄。`stop_generation` 仅取消匹配的活动请求，并发送 `Cancelled` 事件；前端 reducer 会忽略其他请求的迟到事件。每次请求会按原角色顺序发送当前所选对话的完整文字历史。
+
+有用户消息的会话通过独立的 Tauri Store 文件 `conversation-history.json` 持久化。存储数据带版本号，包含标题、最近使用的模型 Profile、可见消息和时间戳；列表按最近更新时间排序。应用启动时创建空白会话，只有用户主动从历史抽屉选择记录后才恢复旧对话。流式响应仅在完成、失败或停止时写入，不按增量频繁落盘。
+
+历史对话不是记忆层：窗口正文、选中文字、上下文草稿和采集结果仍只参与当次请求，不写入历史，也不会在不同对话之间自动注入。
 
 Assistant 支持 420×460 的紧凑模式和最大 720×720 的展开模式。Rust 按当前 DPI 转换尺寸、限制到助手形象所在显示器工作区，并复用窗口定位算法重新靠近助手形象。
 
