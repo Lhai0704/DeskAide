@@ -1,51 +1,71 @@
 # DeskAide
 
-DeskAide 是一个常驻桌面的电子 AI 助手入口。当前版本提供 Windows 透明助手形象、可拖动双窗口、OpenAI-Compatible 文字模型和可替换的助手形象资源包。
+DeskAide 是一个常驻 Windows 桌面的电子 AI 助手入口。它以可拖动的透明助手形象驻留在桌面，通过独立的 Assistant 面板连接 OpenAI-Compatible 文字模型，并允许用户把选中文字或多个外部窗口中可访问的文字作为本次提问的上下文。
 
-> 只有用户主动选择窗口时，DeskAide 才会读取该窗口并生成可编辑的上下文草稿；“选中文字”仍只读取助手激活前的窗口。当前版本不会读取屏幕、剪贴板或后台持续采集其他应用内容。
+当前项目基于 Tauri 2、Svelte 5 和 Rust，仍处于早期开发阶段，仅实现并验证 Windows。
 
-## 当前功能
+> DeskAide 不会持续读取屏幕或监控其他应用。只有用户主动选择上下文并发送时，它才会尝试读取相应文字；发送前可以查看和编辑从外部窗口生成的上下文草稿。
 
-- 透明、无边框、始终置顶的助手形象窗口
-- 单击形象或按 `Ctrl + Shift + Space` 打开 Assistant Window
-- 多显示器工作区定位和助手形象位置持久化
-- 可替换的静态助手形象资源包 Manifest
-- OpenAI-Compatible `/v1/chat/completions` 流式与非流式响应
-- 多个模型 Profile、默认模型、模型切换和连接测试
-- Windows Credential Manager 中按 Profile 隔离的 API Key
-- 保留本地 Mock Provider，离线时仍可运行
-- 真正发送多轮文字历史，支持新建、停止生成、历史对话切换和 Assistant 展开/收起
-- 历史对话保存在本机，支持恢复继续、重命名和删除；启动时仍默认进入空白新对话
-- 从 Rust 读取模型能力，并明确禁用尚不可用的上下文选项
-- 枚举并多选当前可见的 Windows 外部窗口
-- 以摘要卡片展示窗口上下文，并在独立窗口中预览、修改
-- 保留 Assistant 激活前窗口的选中文字采集
-- 通过 UI Automation 尽力获取当前选中文字和窗口可访问文字
-- 按模型上下文窗口限制文字长度，采集失败时继续普通提问
-- `PlatformIntegration`、`ContextProvider` 和 `ModelProvider` 扩展边界
+## 功能概览
+
+### 桌面助手与外观
+
+- 透明、无边框、始终置顶的助手形象窗口；支持拖动、多显示器工作区定位和位置持久化。
+- 单击助手形象或按 `Ctrl + Shift + Space` 打开 Assistant 面板。
+- Assistant 面板支持紧凑/展开、临时置顶、失焦隐藏，以及跟随助手形象重新定位。
+- 支持浅色与深色主题，选择会保存在本机并在下次启动时恢复。
+- 内置机器人助手、女性助手和东亚女性助手三套形象，当前默认使用东亚女性助手。
+- 助手形象由 Manifest 驱动，支持静态图片和自动播放、静音循环的 WebM 视频资源。
+
+### 对话与模型
+
+- 支持 OpenAI-Compatible `/v1/chat/completions` 流式与非流式响应。
+- 真正发送当前对话的多轮文字历史，支持新建对话和停止生成。
+- 有用户消息的对话自动保存在本机；历史抽屉支持继续对话、重命名和删除。
+- 每条历史记录保存其模型 Profile；载入时会尝试恢复原模型，但应用启动后仍默认进入空白新对话。
+- 支持多个模型 Profile、默认模型、对话中切换模型和手动连接测试。
+- API Key 按 Profile 隔离保存在 Windows Credential Manager，不进入普通配置文件或前端 IPC 响应。
+- 内置不发送网络请求的 Mock Provider，未配置真实模型时也可离线体验和开发。
+- Rust 后端向前端提供模型能力和上下文窗口大小，尚不可用的上下文选项会显示明确原因。
+
+### 可编辑的桌面上下文
+
+- 保留原有“当前选中文字”流程：记录 Assistant 激活前的外部窗口，仅在用户勾选并发送后读取选区。
+- 可以枚举当前可见的外部顶层窗口，任意多选并分别采集可访问文字。
+- 每个窗口上下文以摘要卡片展示；单击后可在独立编辑窗口中预览、修改将要发送的完整草稿。
+- 通过 Windows UI Automation 尽力获取选中文字或指定窗口公开的可访问文字，单次采集设有 3 秒超时。
+- 发送前按当前模型的上下文预算截断文字；某项采集失败不会阻止普通提问。
+- 窗口文字、选中文字和临时草稿只参与本次模型请求，不会写入历史对话正文或自动沿用到下一轮。
 
 ## 环境要求
 
 - Windows 10 1803 或更新版本
 - Microsoft Edge WebView2 Runtime
-- Microsoft C++ Build Tools（选择“使用 C++ 的桌面开发”）
-- Rust stable MSVC toolchain
+- Microsoft C++ Build Tools（安装“使用 C++ 的桌面开发”工作负载）
+- Rust stable MSVC toolchain（项目最低 Rust 版本为 1.85）
 - Node.js 24+ 和 npm 11+
 
-详细的 Tauri Windows 前置条件见 [Tauri 官方文档](https://v2.tauri.app/start/prerequisites/)。
+完整的 Tauri Windows 前置条件见 [Tauri 官方文档](https://v2.tauri.app/start/prerequisites/)。
 
-## 开发
+## 快速开始
+
+安装依赖并启动开发环境：
 
 ```powershell
 npm install
-npm run tauri --workspace @deskaide/desktop -- dev
+npm run tauri -- dev
 ```
 
-首次启动时只显示助手形象。拖动可改变位置；单击或按 `Ctrl + Shift + Space` 打开问答面板。
+开发模式会同时启动 Vite（`http://localhost:1420`）和 Tauri。首次启动只显示桌面助手形象；拖动形象可以改变位置，单击形象或按 `Ctrl + Shift + Space` 打开 Assistant。
 
-展开 Assistant 后打开“模型设置”，新建 OpenAI-Compatible Profile。Base URL 可以填写 Provider 根路径（例如 `https://api.longcat.chat/openai`）或以 `/v1` 结尾的 API 地址；API Key 只写入系统凭据库。保存后再由用户主动点击“测试连接”。
+### 配置模型
 
-LongCat 示例配置：
+1. 打开 Assistant 右上角的“设置”。
+2. 在“模型配置”下新建 OpenAI-Compatible Profile。
+3. 填写 Base URL、Model ID、上下文长度和最大输出 Token；需要鉴权时填写 API Key。
+4. 保存后手动点击“测试连接”，再将该 Profile 设为当前模型。
+
+Base URL 可以是 Provider 根路径（例如 `https://api.longcat.chat/openai`），也可以是以 `/v1` 结尾的 API 地址。示例：
 
 ```text
 Base URL: https://api.longcat.chat/openai
@@ -54,7 +74,16 @@ Model ID: LongCat-2.0
 最大输出 Token: 131072
 ```
 
+### 添加窗口上下文
+
+1. 打开输入区旁的上下文菜单。
+2. 若要读取激活前窗口中的选区，勾选“当前选中文字”。
+3. 若要添加其他窗口，刷新窗口列表并多选目标窗口，然后生成上下文草稿。
+4. 单击摘要卡片可检查和修改草稿；确认后随问题一起发送。
+
 ## 检查与构建
+
+提交前可运行完整检查：
 
 ```powershell
 npm run format:check
@@ -64,50 +93,63 @@ npm run test
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-npm run tauri --workspace @deskaide/desktop -- build --debug --no-bundle
 ```
 
-也可以直接运行 `npm run build:debug`。该命令会生成不依赖本地 Vite 服务、可直接双击的 `target/debug/deskaide.exe`。`tauri dev` 使用的开发进程仍会连接 `http://localhost:1420`，不应把开发运行中的临时 EXE 当作独立版本。
+生成不依赖本地 Vite 服务、可直接双击运行的 Debug EXE：
+
+```powershell
+npm run build:debug
+```
+
+输出位于 `target/debug/deskaide.exe`。不要把 `tauri dev` 运行期间生成的临时 EXE 当作独立程序：它仍会连接本地 Vite 服务，关闭开发服务器后会出现 `localhost:1420` 连接失败。
+
+生成 Release 版本和 NSIS 安装包：
+
+```powershell
+npm run tauri -- build
+```
 
 ## 项目结构
 
 ```text
 apps/desktop/              Svelte 前端与 Tauri Windows 应用
+  src/assistant/           对话、历史记录和上下文编辑界面
+  src/avatar/              形象资源包加载与静态/视频渲染
+  src/settings/            主题、形象和模型 Profile 设置
+  src-tauri/               窗口协调、IPC、凭据和本地持久化
 crates/assistant-core/     共享请求、消息、上下文和事件类型
 crates/ai-provider/        Mock 与 OpenAI-Compatible ModelProvider
 crates/context-core/       ContextProvider 与 PlatformIntegration
-crates/platform-windows/   Windows 平台能力边界
-docs/                      架构、资源格式和已知限制
+crates/platform-windows/   Windows 窗口追踪与 UI Automation 能力
+docs/                      架构、形象资源格式和 Windows 限制
 ```
 
-## 平台策略
+更多设计说明：
 
-当前只实现和验证 Windows。业务层不会直接调用 Windows API；未来可以新增 `platform-macos` 或 `platform-linux` crate，并在桌面组合入口注入对应的 `PlatformIntegration`，无需修改模型和上下文接口。
+- [当前架构](docs/architecture.md)
+- [静态助手形象资源包格式（v1）](docs/avatar-pack-format.md)
+- [Windows 已知限制](docs/windows-limitations.md)
 
-## 隐私边界
+## 隐私与安全边界
 
-- 激活时只为“选中文字”记录前一窗口的元数据和 UI Automation 元素引用，不读取其文字。
-- 用户在上下文选择器中明确添加窗口后，才读取该窗口文字并生成可编辑草稿；发送时使用用户最终确认的草稿内容。
-- “选中文字”仍在用户勾选并发送后读取，行为保持不变。
-- 对话文字以明文应用数据保存在本机；窗口正文、选中文字和临时上下文草稿不会写入历史对话。
+- 激活 Assistant 时只为“当前选中文字”记录前一窗口的元数据和 UI Automation 元素引用，不立即读取文字。
+- 用户明确添加外部窗口后才读取该窗口文字，并且发送时使用用户最终确认的草稿。
+- 对话正文以明文应用数据保存在本机；窗口正文、选中文字、临时草稿和采集结果正文不进入历史记录。
 - 历史对话之间彼此隔离，不会跨对话注入消息、摘要或其他记忆信息。
-- API Key 不进入 Tauri Store，后端也不通过 IPC 返回明文；前端只能读取“已设置/未设置”。
-- `Authorization`、Cookie、Token、Secret 等敏感自定义 Header 会被拒绝。
-- 未实现 OCR、持续截图、活动历史、语音、Agent 或电脑操作。
+- API Key 只保存在 Windows Credential Manager；`Authorization`、Cookie、Token、Secret 等敏感自定义 Header 会被拒绝。
 - Mock Provider 不发送网络请求。
-- 上下文只加入本次模型请求，不会自动加入后续对话轮次。
+- 当前未实现 OCR、持续截图、剪贴板读取、活动历史、语音、Agent 或电脑操作。
 
 ## 已知限制
 
-- UI Automation 取决于目标应用的辅助功能实现；选中文字和窗口文字可能只返回部分内容或不可用。
-- 截图和浏览器扩展尚未实现，调用对应平台接口会返回明确的 `Unsupported`。
-- 快捷键可能被其他应用占用；注册失败不会阻止应用启动，仍可单击助手形象。
-- 应用重启后不会自动恢复上次打开的对话；用户可从历史对话抽屉手动载入。
-- 本阶段只有 Windows Credential Manager 具体实现；macOS Keychain 和 Linux Secret Service 只保留后端抽象。
-- 429 会显示明确的限流错误，但当前不自动重试，避免在用户不知情时重复请求或计费。
-- “测试连接”使用 OpenAI-Compatible 模型详情端点；不实现该标准端点的 Provider 可能无法使用连接测试，但不影响其对话接口。
-- 图片上下文仍按模型能力显示禁用原因，但图片采集尚未接入。
-- 助手形象透明区域仍属于窗口命中区域；逐像素鼠标穿透不在当前范围内。
+- UI Automation 的结果取决于目标应用的辅助功能实现，可能只返回部分文字或完全不可用。
+- 当前只支持 Windows；macOS Keychain、Linux Secret Service 和其他平台集成仍只有抽象边界。
+- 截图和浏览器扩展尚未实现；图片上下文会按模型能力展示，但采集入口仍不可用。
+- 快捷键可能被其他应用占用；注册失败不会阻止程序启动，仍可单击助手形象。
+- 应用重启后不会自动恢复上次打开的对话，需要从历史抽屉手动载入。
+- 429 限流错误不会自动重试，避免在用户不知情时重复请求或计费。
+- “测试连接”依赖 OpenAI-Compatible 模型详情端点；未实现该端点的 Provider 仍可能正常对话，但连接测试会失败。
+- 助手形象的透明区域仍属于窗口命中区域，暂不支持逐像素鼠标穿透。
 
 ## 许可证
 
