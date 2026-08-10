@@ -18,13 +18,14 @@ describe('avatar pack preferences', () => {
   it('accepts only avatars in the catalog', () => {
     expect(isAvatarPackId('default-assistant')).toBe(true);
     expect(isAvatarPackId('female-assistant')).toBe(true);
+    expect(isAvatarPackId('east-asian-assistant')).toBe(true);
     expect(isAvatarPackId('unknown')).toBe(false);
   });
 
   it('loads a stored avatar and otherwise uses the default', () => {
     expect(loadAvatarPackId(storageWith('female-assistant'))).toBe('female-assistant');
-    expect(loadAvatarPackId(storageWith('unknown'))).toBe('female-assistant');
-    expect(loadAvatarPackId(storageWith(null))).toBe('female-assistant');
+    expect(loadAvatarPackId(storageWith('unknown'))).toBe('east-asian-assistant');
+    expect(loadAvatarPackId(storageWith(null))).toBe('east-asian-assistant');
   });
 
   it('persists the selected avatar', () => {
@@ -37,5 +38,8 @@ describe('avatar pack preferences', () => {
 
   it('resolves catalog metadata', () => {
     expect(avatarPackById('female-assistant').root).toBe('/avatars/female-assistant');
+    expect(avatarPackById('east-asian-assistant').root).toBe(
+      '/avatars/east-asian-assistant',
+    );
   });
 });

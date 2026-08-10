@@ -1,6 +1,6 @@
 export const AVATAR_PACK_STORAGE_KEY = 'deskaide.avatar-pack';
 export const AVATAR_PACK_CHANGED_EVENT = 'avatar-pack-changed';
-export const DEFAULT_AVATAR_PACK_ID = 'female-assistant' as const;
+export const DEFAULT_AVATAR_PACK_ID = 'east-asian-assistant' as const;
 
 export const AVATAR_PACKS = [
   {
@@ -14,6 +14,12 @@ export const AVATAR_PACKS = [
     name: '女性助手',
     description: '友好、专业的女性 AI 助手形象',
     root: '/avatars/female-assistant',
+  },
+  {
+    id: 'east-asian-assistant',
+    name: '东亚女性助手',
+    description: '沉稳、专业的写实女性助手形象',
+    root: '/avatars/east-asian-assistant',
   },
 ] as const;
 
