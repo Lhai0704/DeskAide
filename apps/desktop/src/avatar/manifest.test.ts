@@ -16,9 +16,32 @@ const validManifest: AvatarPackManifest = {
   },
 };
 
+const validVideoManifest: AvatarPackManifest = {
+  schemaVersion: 2,
+  id: 'video-assistant',
+  name: 'Video Assistant',
+  version: '1.0.0',
+  renderer: 'video',
+  defaultWidth: 160,
+  defaultHeight: 160,
+  states: {
+    idle: { asset: 'idle.webm', alt: 'Idle' },
+    activated: { asset: 'idle.webm', alt: 'Activated' },
+  },
+};
+
 describe('Avatar Pack manifest', () => {
   it('accepts the phase-one schema', () => {
     expect(() => assertManifest(validManifest)).not.toThrow();
+  });
+
+  it('accepts the video schema', () => {
+    expect(() => assertManifest(validVideoManifest)).not.toThrow();
+  });
+
+  it('requires renderer and schema version to match', () => {
+    const invalid = { ...validVideoManifest, renderer: 'static' };
+    expect(() => assertManifest(invalid)).toThrow(/schemaVersion/);
   });
 
   it('rejects path traversal', () => {

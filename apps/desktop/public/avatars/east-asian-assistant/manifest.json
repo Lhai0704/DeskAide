@@ -1,18 +1,18 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "east-asian-assistant",
   "name": "East Asian Female Assistant",
-  "version": "1.0.0",
-  "renderer": "static",
+  "version": "2.0.0",
+  "renderer": "video",
   "defaultWidth": 160,
   "defaultHeight": 160,
   "states": {
     "idle": {
-      "asset": "idle.png",
+      "asset": "idle.webm",
       "alt": "DeskAide 东亚女性助手"
     },
     "activated": {
-      "asset": "activated.png",
+      "asset": "idle.webm",
       "alt": "DeskAide 东亚女性助手已激活"
     }
   }

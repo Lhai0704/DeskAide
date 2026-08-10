@@ -1,4 +1,4 @@
-export type AvatarRenderer = 'static';
+export type AvatarRenderer = 'static' | 'video';
 export type AvatarStateName = 'idle' | 'activated';
 
 export interface AvatarState {
@@ -6,13 +6,23 @@ export interface AvatarState {
   alt: string;
 }
 
-export interface AvatarPackManifest {
-  schemaVersion: 1;
+interface AvatarPackManifestBase {
   id: string;
   name: string;
   version: string;
-  renderer: AvatarRenderer;
   defaultWidth: number;
   defaultHeight: number;
   states: Record<AvatarStateName, AvatarState>;
 }
+
+export interface StaticAvatarPackManifest extends AvatarPackManifestBase {
+  schemaVersion: 1;
+  renderer: 'static';
+}
+
+export interface VideoAvatarPackManifest extends AvatarPackManifestBase {
+  schemaVersion: 2;
+  renderer: 'video';
+}
+
+export type AvatarPackManifest = StaticAvatarPackManifest | VideoAvatarPackManifest;
