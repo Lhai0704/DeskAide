@@ -144,8 +144,9 @@ fn render_text_context(context: &[ContextPayload]) -> Option<String> {
                 ContextSourceType::SelectedText => {
                     (0, "SELECTED TEXT", payload.selected_text.as_deref())
                 }
+                ContextSourceType::Clipboard => (1, "CLIPBOARD TEXT", payload.main_text.as_deref()),
                 ContextSourceType::ActiveWindowText => {
-                    (1, "ACTIVE WINDOW TEXT", payload.main_text.as_deref())
+                    (2, "ACTIVE WINDOW TEXT", payload.main_text.as_deref())
                 }
                 _ => return None,
             };
@@ -232,8 +233,11 @@ mod request_tests {
             url: None,
             selected_text: (source_type == ContextSourceType::SelectedText)
                 .then(|| text.to_owned()),
-            main_text: (source_type == ContextSourceType::ActiveWindowText)
-                .then(|| text.to_owned()),
+            main_text: matches!(
+                source_type,
+                ContextSourceType::Clipboard | ContextSourceType::ActiveWindowText
+            )
+            .then(|| text.to_owned()),
             metadata: serde_json::Value::Null,
             images: Vec::new(),
             warnings: Vec::new(),
@@ -261,6 +265,7 @@ mod request_tests {
     fn context_is_ordered_and_attached_only_to_the_current_user_turn() {
         let request = request(vec![
             payload(ContextSourceType::ActiveWindowText, "whole document"),
+            payload(ContextSourceType::Clipboard, "clipboard excerpt"),
             payload(ContextSourceType::SelectedText, "important selection"),
         ]);
         let body = ChatCompletionRequest::from_model_request(&config(), request).unwrap();
@@ -268,7 +273,11 @@ mod request_tests {
         let content = json["messages"][0]["content"].as_str().unwrap();
 
         assert!(
-            content.find("important selection").unwrap() < content.find("whole document").unwrap()
+            content.find("important selection").unwrap()
+                < content.find("clipboard excerpt").unwrap()
+        );
+        assert!(
+            content.find("clipboard excerpt").unwrap() < content.find("whole document").unwrap()
         );
         assert!(content.ends_with("[USER QUESTION]\nWhat does this mean?"));
         assert!(content.contains("untrusted reference data"));

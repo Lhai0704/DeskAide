@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   CONTEXT_OPTIONS,
   activeModel,
+  contextDraftLabel,
+  contextDraftMeta,
   contextExcerpt,
   contextResultNote,
   contextUnavailableReason,
@@ -9,6 +11,7 @@ import {
   type ModelCapabilities,
   type ModelProfile,
   type TargetWindow,
+  type TextContextDraft,
 } from './model';
 
 const textOnly: ModelCapabilities = {
@@ -38,11 +41,13 @@ describe('context capability presentation', () => {
 
   it('enables implemented text context only when an external target exists', () => {
     const selectedText = CONTEXT_OPTIONS.find((option) => option.id === 'selectedText');
+    const clipboard = CONTEXT_OPTIONS.find((option) => option.id === 'clipboard');
     const webPage = CONTEXT_OPTIONS.find((option) => option.id === 'webPage');
     expect(contextUnavailableReason(selectedText!, textOnly, target)).toBeNull();
     expect(contextUnavailableReason(selectedText!, textOnly, null)).toBe(
       '未记录到本次激活前的外部窗口',
     );
+    expect(contextUnavailableReason(clipboard!, textOnly, null)).toBeNull();
     expect(contextUnavailableReason(webPage!, textOnly, target)).toBe('浏览器扩展将在后续阶段接入');
   });
 
@@ -77,7 +82,23 @@ describe('context capability presentation', () => {
   });
 
   it('creates stable labels and compact one-line context excerpts', () => {
+    const clipboardDraft: TextContextDraft = {
+      id: 'clipboard-1',
+      source: 'clipboard',
+      target: null,
+      content: 'copied text',
+    };
+    const selectedDraft: TextContextDraft = {
+      id: 'selected-1',
+      source: 'selectedText',
+      target,
+      content: 'selected text',
+    };
     expect(windowLabel(target)).toBe('Document');
+    expect(contextDraftLabel(clipboardDraft)).toBe('剪贴板内容');
+    expect(contextDraftMeta(clipboardDraft)).toBe('系统剪贴板');
+    expect(contextDraftLabel(selectedDraft)).toBe('选中文字');
+    expect(contextDraftMeta(selectedDraft)).toBe('来自：Document');
     expect(contextExcerpt(' first\n\nsecond   third ', 14)).toBe('first second t…');
   });
 });

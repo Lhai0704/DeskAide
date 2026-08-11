@@ -93,6 +93,8 @@ pub trait PlatformIntegration: Send + Sync {
         target: &TargetWindow,
     ) -> Result<Option<String>, PlatformError>;
 
+    async fn get_clipboard_text(&self) -> Result<Option<String>, PlatformError>;
+
     async fn capture_window(&self, target: &TargetWindow) -> Result<CapturedImage, PlatformError>;
 
     async fn capture_screen(&self, display: DisplayTarget) -> Result<CapturedImage, PlatformError>;
@@ -263,6 +265,10 @@ mod tests {
             _target: &TargetWindow,
         ) -> Result<Option<String>, PlatformError> {
             Ok(Some("document".to_owned()))
+        }
+
+        async fn get_clipboard_text(&self) -> Result<Option<String>, PlatformError> {
+            Ok(Some("clipboard".to_owned()))
         }
 
         async fn capture_window(

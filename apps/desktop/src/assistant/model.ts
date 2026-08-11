@@ -34,9 +34,10 @@ export interface TargetWindow {
   title: string | null;
 }
 
-export interface WindowContextDraft {
+export interface TextContextDraft {
   id: string;
-  target: TargetWindow;
+  source: ContextSourceId;
+  target: TargetWindow | null;
   content: string;
 }
 
@@ -48,6 +49,7 @@ export interface AssistantShownPayload {
 
 export type ContextSourceId =
   | 'selectedText'
+  | 'clipboard'
   | 'webPage'
   | 'activeWindowText'
   | 'activeWindowScreenshot'
@@ -79,6 +81,20 @@ export function windowLabel(target: TargetWindow): string {
   return target.title || target.applicationName || target.processName || '外部窗口';
 }
 
+export function contextDraftLabel(draft: TextContextDraft): string {
+  if (draft.source === 'selectedText') return '选中文字';
+  if (draft.source === 'clipboard') return '剪贴板内容';
+  return draft.target ? windowLabel(draft.target) : contextSourceLabel(draft.source);
+}
+
+export function contextDraftMeta(draft: TextContextDraft): string {
+  if (draft.source === 'clipboard') return '系统剪贴板';
+  if (draft.source === 'selectedText') {
+    return draft.target ? `来自：${windowLabel(draft.target)}` : '助手激活前的选中文字';
+  }
+  return draft.target?.applicationName || draft.target?.processName || '外部窗口';
+}
+
 export function contextExcerpt(content: string, maxLength = 72): string {
   const normalized = content.replace(/\s+/g, ' ').trim();
   return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}…` : normalized;
@@ -86,6 +102,7 @@ export function contextExcerpt(content: string, maxLength = 72): string {
 
 export const CONTEXT_OPTIONS: ContextOption[] = [
   { id: 'selectedText', label: '当前选中文字', image: false },
+  { id: 'clipboard', label: '剪贴板内容', image: false },
   { id: 'webPage', label: '当前网页', image: false },
   { id: 'activeWindowText', label: '当前窗口文字', image: false },
   { id: 'activeWindowScreenshot', label: '当前窗口截图', image: true },
@@ -109,6 +126,7 @@ export function contextUnavailableReason(
   if (option.image && !capabilities.supportsImages) return '当前模型不支持图片';
   if (option.image) return '图片采集将在后续阶段接入';
   if (option.id === 'webPage') return '浏览器扩展将在后续阶段接入';
+  if (option.id === 'clipboard') return null;
   if (!target) return '未记录到本次激活前的外部窗口';
   return null;
 }

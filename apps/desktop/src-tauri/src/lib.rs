@@ -58,7 +58,7 @@ struct AppState {
     selected_text_provider: Arc<dyn ContextProvider>,
     active_window_text_provider: Arc<dyn ContextProvider>,
     context_target: Mutex<Option<TargetWindow>>,
-    editing_context: Mutex<Option<WindowContextDraft>>,
+    editing_context: Mutex<Option<TextContextDraft>>,
     movement: Mutex<MovementState>,
     active_request: Arc<Mutex<Option<ActiveRequest>>>,
     history_lock: Mutex<()>,
@@ -114,9 +114,10 @@ struct SubmitModelRequestResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-struct WindowContextDraft {
+struct TextContextDraft {
     id: String,
-    target: TargetWindow,
+    source: ContextSourceType,
+    target: Option<TargetWindow>,
     content: String,
 }
 
@@ -466,7 +467,7 @@ async fn list_available_windows(state: State<'_, AppState>) -> Result<Vec<Target
 async fn collect_window_context(
     state: State<'_, AppState>,
     target: TargetWindow,
-) -> Result<WindowContextDraft, String> {
+) -> Result<TextContextDraft, String> {
     let payload = state
         .active_window_text_provider
         .collect(&ContextRequest {
@@ -479,9 +480,57 @@ async fn collect_window_context(
         .main_text
         .filter(|text| !text.trim().is_empty())
         .ok_or_else(|| "该窗口没有公开可读取的文字内容".to_owned())?;
-    Ok(WindowContextDraft {
+    Ok(TextContextDraft {
         id: Uuid::new_v4().to_string(),
-        target,
+        source: ContextSourceType::ActiveWindowText,
+        target: Some(target),
+        content,
+    })
+}
+
+#[tauri::command]
+async fn preview_selected_text_context(
+    state: State<'_, AppState>,
+) -> Result<TextContextDraft, String> {
+    let target = state
+        .context_target
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .clone()
+        .ok_or_else(|| "未记录到本次激活前的外部窗口".to_owned())?;
+    let payload = state
+        .selected_text_provider
+        .collect(&ContextRequest {
+            target: target.clone(),
+            sources: vec![ContextSourceType::SelectedText],
+        })
+        .await
+        .map_err(display_error)?;
+    let content = payload
+        .selected_text
+        .filter(|text| !text.trim().is_empty())
+        .ok_or_else(|| "目标控件没有公开选中文字".to_owned())?;
+    Ok(TextContextDraft {
+        id: Uuid::new_v4().to_string(),
+        source: ContextSourceType::SelectedText,
+        target: Some(target),
+        content,
+    })
+}
+
+#[tauri::command]
+async fn preview_clipboard_context(state: State<'_, AppState>) -> Result<TextContextDraft, String> {
+    let content = state
+        .platform
+        .get_clipboard_text()
+        .await
+        .map_err(display_error)?
+        .filter(|text| !text.trim().is_empty())
+        .ok_or_else(|| "剪贴板中没有可添加的文字内容".to_owned())?;
+    Ok(TextContextDraft {
+        id: Uuid::new_v4().to_string(),
+        source: ContextSourceType::Clipboard,
+        target: None,
         content,
     })
 }
@@ -490,7 +539,7 @@ async fn collect_window_context(
 fn open_context_editor(
     app: AppHandle,
     state: State<'_, AppState>,
-    draft: WindowContextDraft,
+    draft: TextContextDraft,
 ) -> Result<(), String> {
     *state
         .editing_context
@@ -505,7 +554,7 @@ fn open_context_editor(
 }
 
 #[tauri::command]
-fn get_context_editor_draft(state: State<'_, AppState>) -> Option<WindowContextDraft> {
+fn get_context_editor_draft(state: State<'_, AppState>) -> Option<TextContextDraft> {
     state
         .editing_context
         .lock()
@@ -517,7 +566,7 @@ fn get_context_editor_draft(state: State<'_, AppState>) -> Option<WindowContextD
 fn save_context_editor_draft(
     app: AppHandle,
     state: State<'_, AppState>,
-    draft: WindowContextDraft,
+    draft: TextContextDraft,
 ) -> Result<(), String> {
     if draft.content.trim().is_empty() {
         return Err("上下文内容不能为空".to_owned());
@@ -555,7 +604,7 @@ async fn submit_model_request(
     conversation_id: String,
     messages: Vec<ModelMessage>,
     context_sources: Vec<ContextSourceType>,
-    window_contexts: Vec<WindowContextDraft>,
+    context_drafts: Vec<TextContextDraft>,
 ) -> Result<SubmitModelRequestResult, String> {
     if !messages.iter().any(|message| {
         matches!(message.role, deskaide_assistant_core::MessageRole::User)
@@ -585,7 +634,7 @@ async fn submit_model_request(
         &state,
         target.as_ref(),
         &context_sources,
-        &window_contexts,
+        &context_drafts,
         profile.capabilities.supports_text,
         context_char_budget(profile.capabilities.context_window),
     )
@@ -677,7 +726,7 @@ async fn collect_context(
     state: &AppState,
     target: Option<&TargetWindow>,
     requested: &[ContextSourceType],
-    window_contexts: &[WindowContextDraft],
+    context_drafts: &[TextContextDraft],
     supports_text: bool,
     mut remaining_chars: usize,
 ) -> (Vec<ContextPayload>, Vec<ContextCollectionResult>) {
@@ -806,25 +855,41 @@ async fn collect_context(
     }
 
     if supports_text {
-        for draft in window_contexts {
-            let content = draft.content.trim();
-            if content.is_empty() {
+        for draft in context_drafts {
+            let source = draft.source;
+            if !matches!(
+                source,
+                ContextSourceType::SelectedText
+                    | ContextSourceType::Clipboard
+                    | ContextSourceType::ActiveWindowText
+            ) {
                 results.push(context_result(
-                    ContextSourceType::ActiveWindowText,
+                    source,
                     ContextCollectionStatus::Unavailable,
                     0,
                     false,
-                    format!("{}：内容为空，已跳过", window_context_label(draft)),
+                    "该文字草稿类型尚未实现",
+                ));
+                continue;
+            }
+            let content = draft.content.trim();
+            if content.is_empty() {
+                results.push(context_result(
+                    source,
+                    ContextCollectionStatus::Unavailable,
+                    0,
+                    false,
+                    text_context_result_message(draft, "内容为空，已跳过"),
                 ));
                 continue;
             }
             if remaining_chars == 0 {
                 results.push(context_result(
-                    ContextSourceType::ActiveWindowText,
+                    source,
                     ContextCollectionStatus::Unavailable,
                     0,
                     true,
-                    format!("{}：上下文预算已用完", window_context_label(draft)),
+                    text_context_result_message(draft, "上下文预算已用完"),
                 ));
                 continue;
             }
@@ -835,51 +900,83 @@ async fn collect_context(
             if truncated {
                 warnings.push("文字已按当前模型的上下文预算截断".to_owned());
             }
+            let (selected_text, main_text) = match source {
+                ContextSourceType::SelectedText => (Some(text), None),
+                _ => (None, Some(text)),
+            };
             payloads.push(ContextPayload {
-                source_type: ContextSourceType::ActiveWindowText,
-                application_name: draft.target.application_name.clone(),
-                process_name: draft.target.process_name.clone(),
-                window_title: draft.target.title.clone(),
+                source_type: source,
+                application_name: draft
+                    .target
+                    .as_ref()
+                    .and_then(|target| target.application_name.clone()),
+                process_name: draft
+                    .target
+                    .as_ref()
+                    .and_then(|target| target.process_name.clone()),
+                window_title: draft
+                    .target
+                    .as_ref()
+                    .and_then(|target| target.title.clone()),
                 url: None,
-                selected_text: None,
-                main_text: Some(text),
+                selected_text,
+                main_text,
                 metadata: serde_json::json!({ "draftId": draft.id, "edited": true }),
                 images: Vec::new(),
                 warnings,
             });
             results.push(context_result(
-                ContextSourceType::ActiveWindowText,
+                source,
                 ContextCollectionStatus::Added,
                 character_count,
                 truncated,
                 if truncated {
-                    format!("{}：已添加，内容已截断", window_context_label(draft))
+                    text_context_result_message(draft, "已添加，内容已截断")
                 } else {
-                    format!("{}：已添加", window_context_label(draft))
+                    text_context_result_message(draft, "已添加")
                 },
             ));
         }
-    } else if !window_contexts.is_empty() {
-        results.push(context_result(
-            ContextSourceType::ActiveWindowText,
-            ContextCollectionStatus::Unavailable,
-            0,
-            false,
-            "当前模型不支持文字上下文",
-        ));
+    } else {
+        for draft in context_drafts {
+            results.push(context_result(
+                draft.source,
+                ContextCollectionStatus::Unavailable,
+                0,
+                false,
+                text_context_result_message(draft, "当前模型不支持文字上下文"),
+            ));
+        }
     }
 
     (payloads, results)
 }
 
-fn window_context_label(draft: &WindowContextDraft) -> &str {
-    draft
-        .target
-        .title
-        .as_deref()
-        .or(draft.target.application_name.as_deref())
-        .or(draft.target.process_name.as_deref())
-        .unwrap_or("窗口")
+fn text_context_label(draft: &TextContextDraft) -> &str {
+    match draft.source {
+        ContextSourceType::SelectedText => "选中文字",
+        ContextSourceType::Clipboard => "剪贴板内容",
+        ContextSourceType::ActiveWindowText => draft
+            .target
+            .as_ref()
+            .and_then(|target| {
+                target
+                    .title
+                    .as_deref()
+                    .or(target.application_name.as_deref())
+                    .or(target.process_name.as_deref())
+            })
+            .unwrap_or("窗口内容"),
+        _ => "文字上下文",
+    }
+}
+
+fn text_context_result_message(draft: &TextContextDraft, message: &str) -> String {
+    if draft.source == ContextSourceType::ActiveWindowText {
+        format!("{}：{message}", text_context_label(draft))
+    } else {
+        message.to_owned()
+    }
 }
 
 fn context_char_budget(context_window: Option<u64>) -> usize {
@@ -1273,6 +1370,8 @@ pub fn run() {
             set_avatar_interacting,
             list_available_windows,
             collect_window_context,
+            preview_selected_text_context,
+            preview_clipboard_context,
             open_context_editor,
             get_context_editor_draft,
             save_context_editor_draft,
