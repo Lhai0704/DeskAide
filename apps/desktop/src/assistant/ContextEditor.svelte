@@ -3,29 +3,29 @@
   import { listen } from '@tauri-apps/api/event';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { onMount } from 'svelte';
-  import { windowLabel, type WindowContextDraft } from './model';
+  import { contextDraftLabel, contextDraftMeta, type TextContextDraft } from './model';
 
-  let draft: WindowContextDraft | null = null;
+  let draft: TextContextDraft | null = null;
   let content = '';
   let saving = false;
   let error = '';
   let textarea: HTMLTextAreaElement;
 
   onMount(() => {
-    const applyDraft = (next: WindowContextDraft | null) => {
+    const applyDraft = (next: TextContextDraft | null) => {
       draft = next;
       content = next?.content ?? '';
       error = '';
       window.setTimeout(() => textarea?.focus(), 0);
     };
-    const unlistenOpened = listen<WindowContextDraft>('context-editor-opened', ({ payload }) => {
+    const unlistenOpened = listen<TextContextDraft>('context-editor-opened', ({ payload }) => {
       applyDraft(payload);
     });
     const unlistenClose = getCurrentWindow().onCloseRequested((event) => {
       event.preventDefault();
       void close();
     });
-    void invoke<WindowContextDraft | null>('get_context_editor_draft').then(applyDraft);
+    void invoke<TextContextDraft | null>('get_context_editor_draft').then(applyDraft);
 
     return () => {
       void unlistenOpened.then((unlisten) => unlisten());
@@ -73,15 +73,15 @@
 <main class="editor-shell">
   <header>
     <div>
-      <p>窗口上下文</p>
-      <h1>{draft ? windowLabel(draft.target) : '正在加载…'}</h1>
+      <p>文字上下文</p>
+      <h1>{draft ? contextDraftLabel(draft) : '正在加载…'}</h1>
     </div>
     <button type="button" aria-label="关闭" onclick={close}>×</button>
   </header>
 
   {#if draft}
     <div class="source-meta">
-      <span>{draft.target.applicationName || draft.target.processName || '外部应用'}</span>
+      <span>{contextDraftMeta(draft)}</span>
       <span>{content.length.toLocaleString()} 字符</span>
     </div>
     <label>

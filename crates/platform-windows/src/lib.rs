@@ -18,10 +18,17 @@ use uiautomation::{
 };
 use windows::{
     Win32::{
-        Foundation::{CloseHandle, HWND, LPARAM},
-        System::Threading::{
-            OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
-            QueryFullProcessImageNameW,
+        Foundation::{CloseHandle, HGLOBAL, HWND, LPARAM},
+        System::{
+            DataExchange::{
+                CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
+            },
+            Memory::{GlobalLock, GlobalUnlock},
+            Ole::CF_UNICODETEXT,
+            Threading::{
+                OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+                QueryFullProcessImageNameW,
+            },
         },
         UI::WindowsAndMessaging::{
             EnumWindows, GW_OWNER, GWL_EXSTYLE, GetForegroundWindow, GetWindow, GetWindowLongW,
@@ -29,7 +36,7 @@ use windows::{
             WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
         },
     },
-    core::{BOOL, PWSTR},
+    core::{BOOL, PCWSTR, PWSTR},
 };
 
 const PLATFORM: &str = "windows";
@@ -117,6 +124,10 @@ impl PlatformIntegration for WindowsPlatformIntegration {
         self.text_request(target, TextRequestKind::Accessible).await
     }
 
+    async fn get_clipboard_text(&self) -> Result<Option<String>, PlatformError> {
+        read_clipboard_text()
+    }
+
     async fn capture_window(&self, _target: &TargetWindow) -> Result<CapturedImage, PlatformError> {
         unsupported("capture_window")
     }
@@ -130,6 +141,46 @@ impl PlatformIntegration for WindowsPlatformIntegration {
 
     async fn select_region(&self) -> Result<CapturedImage, PlatformError> {
         unsupported("select_region")
+    }
+}
+
+struct ClipboardGuard;
+
+impl Drop for ClipboardGuard {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = CloseClipboard();
+        }
+    }
+}
+
+fn read_clipboard_text() -> Result<Option<String>, PlatformError> {
+    unsafe {
+        OpenClipboard(None).map_err(|error| PlatformError::Unavailable {
+            platform: PLATFORM,
+            capability: "clipboard_text",
+            reason: format!("无法打开剪贴板：{error}"),
+        })?;
+        let _guard = ClipboardGuard;
+
+        if IsClipboardFormatAvailable(CF_UNICODETEXT.0 as u32).is_err() {
+            return Ok(None);
+        }
+
+        let handle = GetClipboardData(CF_UNICODETEXT.0 as u32)
+            .map_err(|error| PlatformError::Integration(format!("读取剪贴板文字失败：{error}")))?;
+        let memory = HGLOBAL(handle.0);
+        let pointer = GlobalLock(memory);
+        if pointer.is_null() {
+            return Err(PlatformError::Integration(
+                "无法访问剪贴板文字内存".to_owned(),
+            ));
+        }
+        let text = PCWSTR(pointer.cast())
+            .to_string()
+            .map_err(|error| PlatformError::Integration(format!("解析剪贴板文字失败：{error}")));
+        let _ = GlobalUnlock(memory);
+        text.map(Some)
     }
 }
 

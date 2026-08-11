@@ -12,10 +12,11 @@ pub struct TargetWindow {
     pub title: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum ContextSourceType {
     SelectedText,
+    Clipboard,
     WebPage,
     ActiveWindowText,
     ActiveWindowScreenshot,
@@ -208,6 +209,10 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&ContextSourceType::ActiveWindowText).unwrap(),
             "\"activeWindowText\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ContextSourceType::Clipboard).unwrap(),
+            "\"clipboard\""
         );
     }
 }

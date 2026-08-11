@@ -27,6 +27,7 @@
   } from './events';
   import {
     CONTEXT_OPTIONS,
+    contextDraftLabel,
     contextResultNote,
     contextSourceLabel,
     contextUnavailableReason,
@@ -35,10 +36,9 @@
     type AssistantBootstrap,
     type AssistantShownPayload,
     type ContextCollectionResult,
-    type ContextSourceId,
     type SubmitModelRequestResult,
     type TargetWindow,
-    type WindowContextDraft,
+    type TextContextDraft,
   } from './model';
   import HistoryDrawer from './HistoryDrawer.svelte';
 
@@ -64,7 +64,10 @@
   let activeTarget: TargetWindow | null = null;
   let contextResults: ContextCollectionResult[] = [];
   let availableWindows: TargetWindow[] = [];
-  let windowContexts: WindowContextDraft[] = [];
+  let contextDrafts: TextContextDraft[] = [];
+  let selectedTextPreview: TextContextDraft | null = null;
+  let clipboardPreview: TextContextDraft | null = null;
+  let readingTextSource: 'selectedText' | 'clipboard' | null = null;
   let loadingWindows = false;
   let collectingWindows = false;
   let contextActionError = '';
@@ -72,9 +75,7 @@
   let conversationElement: HTMLElement;
   let historySaveQueue: Promise<void> = Promise.resolve();
   const ignoredRequestIds = new SvelteSet<string>();
-  const selectedContextSources = new SvelteSet<ContextSourceId>();
   const selectedWindowIds = new SvelteSet<string>();
-  const selectedTextOption = CONTEXT_OPTIONS.find((option) => option.id === 'selectedText')!;
 
   onMount(() => {
     const unlistenResponse = listen<ResponseEvent>('model-response', ({ payload }) => {
@@ -107,13 +108,14 @@
       contextWarning = payload.warning ?? '';
       pinned = payload.pinned;
       contextResults = [];
-      selectedContextSources.clear();
+      selectedTextPreview = null;
+      clipboardPreview = null;
       window.setTimeout(() => textarea?.focus(), 0);
     });
-    const unlistenContextUpdate = listen<WindowContextDraft>(
+    const unlistenContextUpdate = listen<TextContextDraft>(
       'context-draft-updated',
       ({ payload }) => {
-        windowContexts = windowContexts.map((draft) => (draft.id === payload.id ? payload : draft));
+        contextDrafts = contextDrafts.map((draft) => (draft.id === payload.id ? payload : draft));
       },
     );
 
@@ -187,12 +189,13 @@
       const result = await invoke<SubmitModelRequestResult>('submit_model_request', {
         conversationId,
         messages: buildModelMessages(messages),
-        contextSources: [...selectedContextSources],
-        windowContexts,
+        contextSources: [],
+        contextDrafts,
       });
       contextResults = result.contextResults;
-      selectedContextSources.clear();
-      windowContexts = [];
+      contextDrafts = [];
+      selectedTextPreview = null;
+      clipboardPreview = null;
       const note = contextResultNote(result.contextResults);
       if (note) {
         messages = messages.map((message) =>
@@ -243,9 +246,10 @@
     messages = [];
     responseState = initialResponseState();
     contextResults = [];
-    selectedContextSources.clear();
     selectedWindowIds.clear();
-    windowContexts = [];
+    contextDrafts = [];
+    selectedTextPreview = null;
+    clipboardPreview = null;
     prompt = '';
     conversationId = createId();
     historySaveError = '';
@@ -343,9 +347,10 @@
     pending = false;
     stopping = false;
     contextResults = [];
-    selectedContextSources.clear();
     selectedWindowIds.clear();
-    windowContexts = [];
+    contextDrafts = [];
+    selectedTextPreview = null;
+    clipboardPreview = null;
     availableWindows = [];
     contextActionError = '';
     prompt = '';
@@ -428,9 +433,55 @@
     }
   }
 
-  function setContextSelected(source: ContextSourceId, selected: boolean) {
-    if (selected) selectedContextSources.add(source);
-    else selectedContextSources.delete(source);
+  function previewForSource(source: 'selectedText' | 'clipboard') {
+    return source === 'selectedText' ? selectedTextPreview : clipboardPreview;
+  }
+
+  function setPreviewForSource(
+    source: 'selectedText' | 'clipboard',
+    draft: TextContextDraft | null,
+  ) {
+    if (source === 'selectedText') selectedTextPreview = draft;
+    else clipboardPreview = draft;
+  }
+
+  function hasTextContextSource(source: 'selectedText' | 'clipboard') {
+    return contextDrafts.some((draft) => draft.source === source);
+  }
+
+  function textSourceUnavailable(source: 'selectedText' | 'clipboard') {
+    const profile = activeProfile();
+    const option = CONTEXT_OPTIONS.find((candidate) => candidate.id === source);
+    return profile && option
+      ? contextUnavailableReason(option, profile.capabilities, activeTarget)
+      : '';
+  }
+
+  async function readTextSource(source: 'selectedText' | 'clipboard') {
+    if (readingTextSource || textSourceUnavailable(source)) return null;
+    readingTextSource = source;
+    contextActionError = '';
+    try {
+      const command =
+        source === 'selectedText' ? 'preview_selected_text_context' : 'preview_clipboard_context';
+      const draft = await invoke<TextContextDraft>(command);
+      setPreviewForSource(source, draft);
+      return draft;
+    } catch (cause) {
+      contextActionError = cause instanceof Error ? cause.message : String(cause);
+      setPreviewForSource(source, null);
+      return null;
+    } finally {
+      readingTextSource = null;
+    }
+  }
+
+  async function addTextSource(source: 'selectedText' | 'clipboard') {
+    if (hasTextContextSource(source) || pending) return;
+    const draft = previewForSource(source) ?? (await readTextSource(source));
+    if (!draft) return;
+    contextDrafts = [...contextDrafts, draft];
+    setPreviewForSource(source, null);
   }
 
   async function toggleContextPicker() {
@@ -457,7 +508,9 @@
   }
 
   function hasWindowContext(targetId: string) {
-    return windowContexts.some((draft) => draft.target.id === targetId);
+    return contextDrafts.some(
+      (draft) => draft.source === 'activeWindowText' && draft.target?.id === targetId,
+    );
   }
 
   async function addSelectedWindows() {
@@ -467,16 +520,16 @@
     if (targets.length === 0 || collectingWindows) return;
     collectingWindows = true;
     contextActionError = '';
-    const added: WindowContextDraft[] = [];
+    const added: TextContextDraft[] = [];
     let failureCount = 0;
     for (const target of targets) {
       try {
-        added.push(await invoke<WindowContextDraft>('collect_window_context', { target }));
+        added.push(await invoke<TextContextDraft>('collect_window_context', { target }));
       } catch {
         failureCount += 1;
       }
     }
-    windowContexts = [...windowContexts, ...added];
+    contextDrafts = [...contextDrafts, ...added];
     if (failureCount > 0) {
       contextActionError = `${failureCount} 个窗口未能读取；可能是窗口已关闭或未公开可访问文字。`;
     }
@@ -485,13 +538,13 @@
     if (failureCount === 0) contextOpen = false;
   }
 
-  async function editWindowContext(draft: WindowContextDraft) {
+  async function editContextDraft(draft: TextContextDraft) {
     contextOpen = false;
     await invoke('open_context_editor', { draft });
   }
 
-  function removeWindowContext(id: string) {
-    windowContexts = windowContexts.filter((draft) => draft.id !== id);
+  function removeContextDraft(id: string) {
+    contextDrafts = contextDrafts.filter((draft) => draft.id !== id);
   }
 
   function targetLabel() {
@@ -499,13 +552,6 @@
     return (
       activeTarget.title || activeTarget.applicationName || activeTarget.processName || '外部窗口'
     );
-  }
-
-  function selectedTextUnavailable() {
-    const profile = activeProfile();
-    return profile
-      ? contextUnavailableReason(selectedTextOption, profile.capabilities, activeTarget)
-      : '';
   }
 
   function createId() {
@@ -570,28 +616,83 @@
         aria-expanded={contextOpen}
         onclick={toggleContextPicker}
       >
-        添加上下文 <span>{selectedContextSources.size + windowContexts.length}</span>
+        添加上下文 <span>{contextDrafts.length}</span>
       </button>
       {#if contextOpen && activeProfile()}
         <div class="context-menu">
           <div class="context-heading">
             <strong>添加本次上下文</strong>
-            <small>可同时选择多个窗口，内容会先采集为可编辑草稿</small>
+            <small>先预览选中文字或剪贴板，再添加为可编辑草稿</small>
           </div>
-          <label class="context-option available" title={selectedTextUnavailable() || '发送时读取'}>
-            <input
-              type="checkbox"
-              checked={selectedContextSources.has('selectedText')}
-              disabled={Boolean(selectedTextUnavailable()) || pending}
-              onchange={(event) =>
-                setContextSelected(
-                  'selectedText',
-                  (event.currentTarget as HTMLInputElement).checked,
-                )}
-            />
-            <span>助手激活前的选中文字</span>
-            <small>{selectedTextUnavailable() || `来自：${targetLabel()}`}</small>
-          </label>
+          <div class="text-context-option">
+            <div>
+              <span>助手激活前的选中文字</span>
+              <small>{textSourceUnavailable('selectedText') || `来自：${targetLabel()}`}</small>
+            </div>
+            <div class="context-option-actions">
+              <button
+                type="button"
+                onclick={() => readTextSource('selectedText')}
+                disabled={Boolean(textSourceUnavailable('selectedText')) ||
+                  readingTextSource !== null ||
+                  pending}
+              >
+                {readingTextSource === 'selectedText' ? '读取中…' : '预览'}
+              </button>
+              <button
+                class="primary"
+                type="button"
+                onclick={() => addTextSource('selectedText')}
+                disabled={Boolean(textSourceUnavailable('selectedText')) ||
+                  readingTextSource !== null ||
+                  hasTextContextSource('selectedText') ||
+                  pending}
+              >
+                {hasTextContextSource('selectedText') ? '已添加' : '添加'}
+              </button>
+            </div>
+          </div>
+          {#if selectedTextPreview}
+            <div class="context-preview">
+              <span>选中文字预览 · {selectedTextPreview.content.length.toLocaleString()} 字符</span>
+              <p>{selectedTextPreview.content}</p>
+            </div>
+          {/if}
+
+          <div class="text-context-option">
+            <div>
+              <span>剪贴板中的内容</span>
+              <small>{textSourceUnavailable('clipboard') || '读取当前系统剪贴板中的文字'}</small>
+            </div>
+            <div class="context-option-actions">
+              <button
+                type="button"
+                onclick={() => readTextSource('clipboard')}
+                disabled={Boolean(textSourceUnavailable('clipboard')) ||
+                  readingTextSource !== null ||
+                  pending}
+              >
+                {readingTextSource === 'clipboard' ? '读取中…' : '预览'}
+              </button>
+              <button
+                class="primary"
+                type="button"
+                onclick={() => addTextSource('clipboard')}
+                disabled={Boolean(textSourceUnavailable('clipboard')) ||
+                  readingTextSource !== null ||
+                  hasTextContextSource('clipboard') ||
+                  pending}
+              >
+                {hasTextContextSource('clipboard') ? '已添加' : '添加'}
+              </button>
+            </div>
+          </div>
+          {#if clipboardPreview}
+            <div class="context-preview">
+              <span>剪贴板预览 · {clipboardPreview.content.length.toLocaleString()} 字符</span>
+              <p>{clipboardPreview.content}</p>
+            </div>
+          {/if}
 
           <div class="window-list-heading">
             <span>选择窗口内容</span>
@@ -698,25 +799,25 @@
     {/if}
   </section>
 
-  {#if windowContexts.length > 0}
-    <section class="context-drafts" aria-label="待发送的窗口上下文">
-      {#each windowContexts as draft (draft.id)}
+  {#if contextDrafts.length > 0}
+    <section class="context-drafts" aria-label="待发送的文字上下文">
+      {#each contextDrafts as draft (draft.id)}
         <article class="context-card">
           <button
             class="context-card-main"
             type="button"
             title="打开内容编辑窗口"
-            onclick={() => editWindowContext(draft)}
+            onclick={() => editContextDraft(draft)}
           >
-            <strong>{windowLabel(draft.target)}</strong>
+            <strong>{contextDraftLabel(draft)}</strong>
             <small>{contextExcerpt(draft.content)}</small>
           </button>
           <button
             class="context-card-remove"
             type="button"
             title="移除此上下文"
-            aria-label={`移除 ${windowLabel(draft.target)}`}
-            onclick={() => removeWindowContext(draft.id)}>×</button
+            aria-label={`移除 ${contextDraftLabel(draft)}`}
+            onclick={() => removeContextDraft(draft.id)}>×</button
           >
         </article>
       {/each}
@@ -939,30 +1040,89 @@
   }
 
   .context-heading small,
-  .context-option small {
+  .text-context-option small {
     color: var(--theme-muted);
     font-size: 9px;
   }
 
-  .context-option {
-    display: grid;
-    padding: 7px 3px;
-    grid-template-columns: 18px 1fr;
-    column-gap: 4px;
-    opacity: 0.62;
+  .text-context-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 3px;
+    border-top: 1px solid var(--theme-border);
   }
 
-  .context-option.available {
-    opacity: 1;
+  .text-context-option > div:first-child {
+    display: grid;
+    min-width: 0;
+    gap: 2px;
+  }
+
+  .text-context-option > div:first-child > span,
+  .text-context-option small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .text-context-option > div:first-child > span {
+    font-size: 11px;
+  }
+
+  .context-option-actions {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 5px;
+  }
+
+  .context-option-actions button {
+    padding: 4px 8px;
+    border: 1px solid var(--theme-border-strong);
+    border-radius: 7px;
+    color: var(--theme-muted-strong);
+    background: var(--theme-control-bg);
+    font-size: 9px;
+    font-weight: 700;
     cursor: pointer;
   }
 
-  .context-option input {
-    grid-row: 1 / 3;
+  .context-option-actions button.primary {
+    border-color: var(--theme-accent-border);
+    color: var(--theme-primary-text);
+    background: var(--theme-primary-background);
   }
 
-  .context-option > span {
-    font-size: 11px;
+  .context-option-actions button:disabled {
+    cursor: default;
+    filter: saturate(0.35);
+    opacity: 0.5;
+  }
+
+  .context-preview {
+    margin: 1px 3px 7px;
+    padding: 7px 8px;
+    border: 1px solid var(--theme-accent-border);
+    border-radius: 8px;
+    background: var(--theme-input-bg);
+  }
+
+  .context-preview > span {
+    color: var(--theme-accent-text);
+    font-size: 9px;
+    font-weight: 700;
+  }
+
+  .context-preview p {
+    max-height: 90px;
+    margin: 5px 0 0;
+    overflow: auto;
+    color: var(--theme-text);
+    font-size: 10px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-break: break-word;
   }
 
   .window-list-heading {
