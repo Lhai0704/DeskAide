@@ -12,8 +12,8 @@
       "alt": "DeskAide 助手形象"
     },
     "activated": {
-      "asset": "activated.png",
-      "alt": "DeskAide 助手形象已激活"
+      "asset": "idle.png",
+      "alt": "DeskAide 助手形象"
     }
   }
 }

@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { ModelProfile } from '../assistant/model';
-  import type { AvatarPackId } from '../avatar/catalog';
+  import { avatarPackById, type AvatarPackId } from '../avatar/catalog';
   import AvatarSettings from './AvatarSettings.svelte';
   import ModelProfileForm from './ModelProfileForm.svelte';
   import ThemeSettings from './ThemeSettings.svelte';
@@ -86,7 +86,7 @@
         }}
       >
         <span>助手形象</span>
-        <small>{avatarPackId === 'legacy-pack-a' ? '备用助手' : '机器人助手'}</small>
+        <small>{avatarPackById(avatarPackId).name}</small>
       </button>
       <p class="nav-heading">模型配置</p>
       {#each profiles as profile (profile.id)}

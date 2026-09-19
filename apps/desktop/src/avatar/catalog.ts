@@ -1,25 +1,13 @@
 export const AVATAR_PACK_STORAGE_KEY = 'deskaide.avatar-pack';
 export const AVATAR_PACK_CHANGED_EVENT = 'avatar-pack-changed';
-export const DEFAULT_AVATAR_PACK_ID = 'legacy-pack-b' as const;
+export const DEFAULT_AVATAR_PACK_ID = 'default-assistant' as const;
 
 export const AVATAR_PACKS = [
   {
     id: 'default-assistant',
     name: '机器人助手',
-    description: '经典的礼帽机器人形象',
+    description: '静态图片占位，助手形象待后续规划',
     root: '/avatars/default-assistant',
-  },
-  {
-    id: 'legacy-pack-a',
-    name: '备用助手',
-    description: '静态备用形象',
-    root: '/avatars/legacy-pack-a',
-  },
-  {
-    id: 'legacy-pack-b',
-    name: '备用助手',
-    description: '静态备用形象',
-    root: '/avatars/legacy-pack-b',
   },
 ] as const;
 
