@@ -5,8 +5,16 @@
   import ModelProfileForm from './ModelProfileForm.svelte';
   import ThemeSettings from './ThemeSettings.svelte';
   import type { Theme } from './theme';
+  import SpeechSettingsView from './SpeechSettings.svelte';
+  import type { SpeechSettings } from '../speech/controller';
 
   interface Props {
+    speechSettings: SpeechSettings;
+    onspeechchange: (settings: SpeechSettings) => Promise<void>;
+    onspeechpreview: (settings: SpeechSettings) => void;
+    onspeechstop: () => void;
+    speechStatus: string;
+    speechActive: boolean;
     profiles: ModelProfile[];
     activeProfileId: string;
     avatarPackId: AvatarPackId;
@@ -18,6 +26,12 @@
   }
 
   let {
+    speechSettings,
+    onspeechchange,
+    onspeechpreview,
+    onspeechstop,
+    speechStatus,
+    speechActive,
     profiles,
     activeProfileId,
     avatarPackId,
@@ -32,7 +46,7 @@
   }
   let selectedId = $state(initialSelection());
   let creating = $state(false);
-  let section = $state<'appearance' | 'avatar' | 'models'>('appearance');
+  let section = $state<'appearance' | 'avatar' | 'models' | 'speech'>('appearance');
   let selected = $derived(profiles.find((profile) => profile.id === selectedId) ?? null);
 
   $effect(() => {
@@ -88,6 +102,17 @@
         <span>助手形象</span>
         <small>{avatarPackById(avatarPackId).name}</small>
       </button>
+      <button
+        type="button"
+        class:selected={section === 'speech'}
+        onclick={() => {
+          section = 'speech';
+          creating = false;
+        }}
+        ><span>语音播报</span><small
+          >{speechSettings.enabled ? '自动朗读已开启' : '自动朗读已关闭'}</small
+        ></button
+      >
       <p class="nav-heading">模型配置</p>
       {#each profiles as profile (profile.id)}
         <button
@@ -122,6 +147,15 @@
     <div class="form-panel">
       {#if section === 'appearance'}
         <ThemeSettings {theme} {onthemechange} />
+      {:else if section === 'speech'}
+        <SpeechSettingsView
+          settings={speechSettings}
+          onchange={onspeechchange}
+          onpreview={onspeechpreview}
+          onstop={onspeechstop}
+          status={speechStatus}
+          active={speechActive}
+        />
       {:else if section === 'avatar'}
         <AvatarSettings {avatarPackId} {onavatarchange} />
       {:else}

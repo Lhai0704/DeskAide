@@ -40,6 +40,24 @@ Assistant 输入
 
 `OpenAiCompatibleProvider` 把以 `/v1` 结尾和 Provider 根路径两类 Base URL 统一为 `/v1/chat/completions`。请求支持 system/user/assistant、多轮文字、temperature 和 max_tokens。用户授权的桌面文字以明确标记的不可信引用区块加入当前用户消息，不进入后续会话历史。响应层分别处理标准 JSON 与增量 SSE，并把 HTTP、网络、超时、格式和流中断映射为稳定错误代码。
 
+## 语音播报数据流
+
+```text
+model-response → SpeechText 增量过滤与分句
+  → SpeechController（会话快照、串行片段队列、15 秒播放缓冲门槛）
+  → speak_segment（Rust / 本地 HTTP）
+  → fast-qwen3-tts /generate/stream（persist=false）
+  → NDJSON Float32 PCM → Tauri Channel → SpeechPlayer / Web Audio
+```
+
+语音设置独立存为 Tauri Store `settings.json` 的 `speech` 项，包含开关、音量、参考声音文件标识、模型及本地项目目录。`get_speech_settings`、`save_speech_settings` 管理设置，`check_speech_service`、`speech_references` 负责服务探测和素材列表。前端不直接访问 HTTP，不持久化合成音频。
+
+每个播报会话固定声音和模型配置；所有 Channel 消息携带会话、文字请求与片段 ID。停止朗读立即关闭 AudioContext 并丢弃迟到消息，再通过 `cancel_speech` 取消后端任务。服务端在加载结束或音频分块处检查取消，Rust 在旧 GPU 工作结束前保持队列串行。隐藏窗口不销毁播报会话；新问题、切换对话或停止生成会取消它。
+
+Rust 合并并发启动请求、验证 TTS 服务身份和临时播报/取消能力，使用项目内 Python 与离线环境启动服务。已存在的兼容服务直接复用。自启服务接收 `DESKAIDE_PARENT_PID`，持有 DeskAide 的 Windows 进程句柄，父进程退出后结束运行；正常退出回调也清理自有进程树。手动启动的服务不受影响。
+
+TTS 暂不可用、忙碌、超时或音频格式错误只会结束本轮语音，不改变文字生成和历史保存。音频与文本均不写入 TTS 作品库或正文日志；本地参考素材及其预处理缓存仍由 TTS 管理。
+
 ## Profile 与凭据边界
 
 `ProfileCollection` 管理内置 Mock 和用户模型，普通字段以 `SavedProfiles` 写入 Tauri Store。默认 Profile ID 与 Profile 一起保存；启动时即使 Store 为空或损坏，也会恢复 Mock Profile。

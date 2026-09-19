@@ -10,3 +10,14 @@
 *.log
 *.pdb
 .DS_Store
+
+# Local credentials, conversation exports, and speech data
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+/settings.json
+/conversation-history.json
+/test-voice/
+/generated/

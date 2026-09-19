@@ -2,6 +2,7 @@ mod conversation_history;
 mod credentials;
 mod model_profiles;
 mod positioning;
+mod speech;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -743,7 +744,7 @@ async fn collect_context(
     }
     for source in requested {
         if !ordered_sources.contains(source) {
-            ordered_sources.push(source.clone());
+            ordered_sources.push(*source);
         }
     }
 
@@ -802,7 +803,7 @@ async fn collect_context(
 
         let request = ContextRequest {
             target: target.clone(),
-            sources: vec![source.clone()],
+            sources: vec![source],
         };
         match provider.collect(&request).await {
             Ok(mut payload) => {
@@ -1358,7 +1359,14 @@ pub fn run() {
                 .build(),
         )
         .manage(AppState::new())
+        .manage(speech::SpeechState::default())
         .invoke_handler(tauri::generate_handler![
+            speech::get_speech_settings,
+            speech::save_speech_settings,
+            speech::check_speech_service,
+            speech::speech_references,
+            speech::speak_segment,
+            speech::cancel_speech,
             get_assistant_bootstrap,
             save_model_profile,
             delete_model_profile,
@@ -1409,8 +1417,11 @@ pub fn run() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("DeskAide failed to start");
+        .build(tauri::generate_context!())
+        .expect("DeskAide failed to start")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) { app.state::<speech::SpeechState>().shutdown(); }
+        });
 }
 
 #[cfg(test)]
