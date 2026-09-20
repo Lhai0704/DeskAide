@@ -17,9 +17,15 @@ desktop-svelte → 仅通过 Tauri IPC 和事件访问后端
 
 ## 窗口协调
 
-Tauri 在启动时创建 `avatar` 和 `assistant` 两个窗口。Assistant 默认隐藏，助手形象窗口不可获取焦点。单击助手形象和全局快捷键最终调用同一个异步 Rust `toggle_assistant` 命令。
+Tauri 在启动时创建 `avatar`、`assistant` 和 `context-editor` 三个窗口。Assistant 和上下文编辑器默认隐藏，助手形象窗口不可获取焦点。单击助手形象调用异步 Rust `toggle_assistant` 命令切换面板；全局快捷键在面板隐藏时显示面板，已显示时只聚焦，不再次隐藏。
 
 打开 Assistant 前，Rust 先记录外部前台窗口元数据和 UI Automation 焦点元素，然后再显示并聚焦 Assistant。Rust 根据助手形象所在显示器的物理工作区计算 Assistant 位置，顺序为右、左、下、上，最后执行边界限制。助手形象移动时 Assistant 跟随；停止移动 220ms 后将位置写入 Tauri Store。
+
+## 全局快捷键
+
+`shortcuts.rs` 管理激活入口，设置页通过 Tauri IPC 读取与保存 `shortcut` 和 `copilotEnabled`，存储在 `settings.json` 的 `shortcuts` 键中。备用组合键通过 Tauri global-shortcut 插件注册；格式错误或注册冲突时返回错误，保留已有配置。
+
+标准 Copilot 键的 Win + Shift + F23 由专用 Windows 消息线程上的低级键盘钩子处理。钩子仅抑制匹配的 F23 按下与抬起，通过通道通知激活逻辑；长按去重，不采集或保存键入文字。关闭开关或退出程序后恢复系统行为，不更改系统按键映射。启动注册或监听失败会显示在快捷键设置页，点击入口仍可使用。
 
 ## 模型请求数据流
 

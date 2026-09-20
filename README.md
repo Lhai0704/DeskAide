@@ -14,8 +14,8 @@ DeskAide 是一个常驻 Windows 桌面的电子 AI 助手入口。它以可拖�
 - 单击助手形象，或按 Copilot 键 / `Ctrl + Shift + Space` 激活 Assistant 面板；快捷键可在“设置 → 快捷键”中修改。
 - Assistant 面板支持紧凑/展开、临时置顶、失焦隐藏，以及跟随助手形象重新定位。
 - 支持浅色与深色主题，选择会保存在本机并在下次启动时恢复。
-- 默认使用透明背景的机器人静态形象，也可在设置中切换回机器人。保留单击激活和拖动。
-- 助手形象由 Manifest 驱动。当前目录提供机器人静态资源包。
+- 默认使用机器人静态形象，支持单击激活和拖动。
+- 助手形象由 Manifest 驱动，当前目录提供机器人静态资源包。
 
 ### 对话与模型
 
@@ -129,7 +129,7 @@ npm run tauri -- build
 apps/desktop/              Svelte 前端与 Tauri Windows 应用
   src/assistant/           对话、历史记录和上下文编辑界面
   src/avatar/              形象资源包加载与静态/视频渲染
-  src/settings/            主题、形象和模型 Profile 设置
+  src/settings/            主题、形象、快捷键、语音和模型 Profile 设置
   src-tauri/               窗口协调、IPC、凭据和本地持久化
 crates/assistant-core/     共享请求、消息、上下文和事件类型
 crates/ai-provider/        Mock 与 OpenAI-Compatible ModelProvider
@@ -154,6 +154,12 @@ docs/                      架构、形象资源格式和 Windows 限制
 - Mock Provider 不发送网络请求。
 - 当前未实现 OCR、持续截图、剪贴板读取、活动历史、语音输入、Agent 或电脑操作。
 
+## 激活快捷键
+
+“设置 → 快捷键”可开关 Copilot 键并保存备用组合键，立即生效且重启后保留。默认开启标准 Copilot 键（Win + Shift + F23），由进程内 Windows 键盘钩子拦截 F23 按下/抬起，避免同时打开系统搜索；只在 DeskAide 运行期间接管，不修改注册表。退出或关闭开关后恢复系统行为。长按只激活一次，已显示的助手获得焦点而不会被再次隐藏。
+
+备用快捷键默认 `Control+Shift+Space`，支持如 `Alt+Space` 的组合；占用或格式错误会保留原配置并显示错误。使用前需运行 DeskAide；目前未提供开机自启设置。不同键盘固件可能发送其他键值，实际 Copilot 按键仍需在目标电脑手动验收。
+
 ## 已知限制
 
 - UI Automation 的结果取决于目标应用的辅助功能实现，可能只返回部分文字或完全不可用。
@@ -168,9 +174,3 @@ docs/                      架构、形象资源格式和 Windows 限制
 ## 许可证
 
 [MIT](LICENSE)
-
-### 激活快捷键
-
-“设置 → 快捷键”可开关 Copilot 键并保存备用组合键，立即生效且重启后保留。默认开启标准 Copilot 键（Win + Shift + F23），由进程内 Windows 键盘钩子拦截 F23 按下/抬起，避免同时打开系统搜索；只在 DeskAide 运行期间接管，不修改注册表。退出或关闭开关后恢复系统行为。长按只激活一次，已显示的助手获得焦点而不会被再次隐藏。
-
-备用快捷键默认 `Control+Shift+Space`，支持如 `Alt+Space` 的组合；占用或格式错误会保留原配置并显示错误。开机自启不在本次范围内：使用前需运行 DeskAide。不同键盘固件可能发送其他键值，实际 Copilot 按键仍需在目标电脑手动验收。
