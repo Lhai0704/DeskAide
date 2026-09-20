@@ -1,0 +1,3 @@
+# Keep formatter-compatible line endings on Windows as well as Unix.
+# Git's text detection leaves binary avatar/media assets untouched.
+* text=auto eol=lf

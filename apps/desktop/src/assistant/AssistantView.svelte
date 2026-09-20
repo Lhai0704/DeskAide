@@ -40,7 +40,23 @@
     type TargetWindow,
     type TextContextDraft,
   } from './model';
+  import {
+    SpeechController,
+    defaultSpeechSettings,
+    type SpeechSettings,
+  } from '../speech/controller';
   import HistoryDrawer from './HistoryDrawer.svelte';
+
+  let speechSettings = defaultSpeechSettings();
+  let speechStatus = '';
+  let speechActive = false;
+  let speech: SpeechController;
+  async function changeSpeech(settings: SpeechSettings) {
+    await invoke('save_speech_settings', { settings });
+    speechSettings = settings;
+    speech?.volume(settings.volume);
+    if (!settings.enabled) speech?.stop();
+  }
 
   let prompt = '';
   let responseState: ResponseState = initialResponseState();
@@ -78,6 +94,17 @@
   const selectedWindowIds = new SvelteSet<string>();
 
   onMount(() => {
+    speech = new SpeechController((label, active) => {
+      speechStatus = label;
+      speechActive = active;
+    });
+    void invoke<SpeechSettings>('get_speech_settings')
+      .then((value) => {
+        speechSettings = value;
+      })
+      .catch((error) => {
+        speechStatus = `语音设置读取失败：${String(error)}`;
+      });
     const unlistenResponse = listen<ResponseEvent>('model-response', ({ payload }) => {
       if (ignoredRequestIds.has(payload.requestId)) {
         if (
@@ -89,6 +116,7 @@
         }
         return;
       }
+      speech.event(payload);
       const nextResponseState = reduceResponseEvent(responseState, payload);
       responseState = nextResponseState;
       if (
@@ -123,6 +151,7 @@
     textarea?.focus();
 
     return () => {
+      speech.dispose();
       void unlistenResponse.then((unlisten) => unlisten());
       void unlistenShown.then((unlisten) => unlisten());
       void unlistenContextUpdate.then((unlisten) => unlisten());
@@ -178,6 +207,7 @@
     const value = prompt.trim();
     if (!value || pending || !activeModelProfileId) return;
 
+    speech.begin(speechSettings);
     const userMessageId = createId();
     messages = [...messages, { id: userMessageId, role: 'user', content: value }];
     prompt = '';
@@ -206,6 +236,7 @@
       if (!responseState.requestId)
         responseState = { ...responseState, requestId: result.requestId };
     } catch (cause) {
+      speech.stop();
       pending = false;
       const failedResponse: ResponseState = {
         requestId: null,
@@ -219,6 +250,7 @@
   }
 
   async function stop() {
+    speech.stop();
     if (!responseState.requestId || !pending || stopping) return;
     stopping = true;
     try {
@@ -258,6 +290,7 @@
   }
 
   async function interruptActiveGeneration() {
+    speech.stop();
     if (!pending || !responseState.requestId) return;
     const requestId = responseState.requestId;
     ignoredRequestIds.add(requestId);
@@ -833,7 +866,10 @@
       placeholder="现在需要我帮你做什么？"
       disabled={pending}></textarea>
     <div class="composer-footer">
-      <span>Ctrl + Enter 发送 · Esc 隐藏</span>
+      <span>{speechStatus || 'Ctrl + Enter 发送 · Esc 隐藏'}</span>
+      {#if speechActive}<button class="stop" type="button" onclick={() => speech.stop()}
+          >停止朗读</button
+        >{/if}
       {#if pending}
         <button class="stop" type="button" onclick={stop} disabled={stopping}>
           {stopping ? '正在停止' : '停止生成'}
@@ -851,6 +887,12 @@
 
   {#if settingsOpen && bootstrap}
     <ModelSettings
+      {speechSettings}
+      {speechStatus}
+      {speechActive}
+      onspeechchange={changeSpeech}
+      onspeechpreview={(settings) => speech.preview(settings)}
+      onspeechstop={() => speech.stop()}
       profiles={bootstrap.modelProfiles}
       activeProfileId={activeModelProfileId}
       {avatarPackId}

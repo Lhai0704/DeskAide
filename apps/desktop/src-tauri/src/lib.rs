@@ -2,6 +2,8 @@ mod conversation_history;
 mod credentials;
 mod model_profiles;
 mod positioning;
+mod shortcuts;
+mod speech;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -29,7 +31,7 @@ use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Position, Size as TauriSize,
     State, WebviewWindow, WindowEvent,
 };
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+use tauri_plugin_global_shortcut::ShortcutState;
 use tauri_plugin_store::StoreExt;
 use uuid::Uuid;
 
@@ -743,7 +745,7 @@ async fn collect_context(
     }
     for source in requested {
         if !ordered_sources.contains(source) {
-            ordered_sources.push(source.clone());
+            ordered_sources.push(*source);
         }
     }
 
@@ -802,7 +804,7 @@ async fn collect_context(
 
         let request = ContextRequest {
             target: target.clone(),
-            sources: vec![source.clone()],
+            sources: vec![source],
         };
         match provider.collect(&request).await {
             Ok(mut payload) => {
@@ -1185,10 +1187,11 @@ fn restore_avatar_position(app: &AppHandle) -> Result<(), String> {
             .map_err(display_error)?
             .ok_or_else(|| "无法确定主显示器".to_owned())?;
         let work = monitor.work_area();
+        let avatar_size = avatar.outer_size().map_err(display_error)?;
         (
             (
-                work.position.x + work.size.width as i32 - 160 - 24,
-                work.position.y + work.size.height as i32 - 160 - 24,
+                work.position.x + work.size.width as i32 - avatar_size.width as i32 - 24,
+                work.position.y + work.size.height as i32 - avatar_size.height as i32 - 24,
             ),
             monitor.name().cloned(),
         )
@@ -1335,30 +1338,30 @@ fn handle_assistant_blur(app: &AppHandle) {
 
 #[cfg(windows)]
 pub fn run() {
-    let shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::Space);
-    let handler_shortcut = shortcut;
-
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(move |app, triggered, event| {
-                    if triggered == &handler_shortcut
-                        && event.state() == ShortcutState::Pressed
-                    {
-                        let app = app.clone();
-                        tauri::async_runtime::spawn(async move {
-                            let state = app.state::<AppState>();
-                            if let Err(error) = toggle_assistant(app.clone(), state).await {
-                                eprintln!("failed to toggle assistant from shortcut: {error}");
-                            }
-                        });
+                .with_handler(move |app, _, event| {
+                    if event.state() == ShortcutState::Pressed {
+                        shortcuts::activate(app);
                     }
                 })
                 .build(),
         )
         .manage(AppState::new())
+        .manage(speech::SpeechState::default())
+        .manage(shortcuts::ShortcutState::default())
         .invoke_handler(tauri::generate_handler![
+            shortcuts::get_shortcut_settings,
+            shortcuts::get_shortcut_error,
+            shortcuts::save_shortcut_settings,
+            speech::get_speech_settings,
+            speech::save_speech_settings,
+            speech::check_speech_service,
+            speech::speech_references,
+            speech::speak_segment,
+            speech::cancel_speech,
             get_assistant_bootstrap,
             save_model_profile,
             delete_model_profile,
@@ -1385,16 +1388,14 @@ pub fn run() {
             rename_conversation,
             delete_conversation
         ])
-        .on_window_event(|window, event| {
-            match event {
-                WindowEvent::Moved(position) if window.label() == AVATAR_LABEL => {
-                    handle_avatar_moved(window.app_handle(), *position);
-                }
-                WindowEvent::Focused(false) if window.label() == ASSISTANT_LABEL => {
-                    handle_assistant_blur(window.app_handle());
-                }
-                _ => {}
+        .on_window_event(|window, event| match event {
+            WindowEvent::Moved(position) if window.label() == AVATAR_LABEL => {
+                handle_avatar_moved(window.app_handle(), *position);
             }
+            WindowEvent::Focused(false) if window.label() == ASSISTANT_LABEL => {
+                handle_assistant_blur(window.app_handle());
+            }
+            _ => {}
         })
         .setup(move |app| {
             load_profiles(app.handle())?;
@@ -1402,15 +1403,16 @@ pub fn run() {
             // Default to the large (expanded) assistant size on startup.
             set_assistant_expanded(app.handle().clone(), true)?;
             position_assistant(app.handle())?;
-            if let Err(error) = app.global_shortcut().register(shortcut) {
-                eprintln!(
-                    "Ctrl+Shift+Space could not be registered; click activation remains available: {error}"
-                );
-            }
+            shortcuts::setup(app.handle())?;
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("DeskAide failed to start");
+        .build(tauri::generate_context!())
+        .expect("DeskAide failed to start")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                app.state::<speech::SpeechState>().shutdown();
+            }
+        });
 }
 
 #[cfg(test)]

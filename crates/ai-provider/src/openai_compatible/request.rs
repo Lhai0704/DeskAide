@@ -226,7 +226,7 @@ mod request_tests {
             title: Some("Notes".to_owned()),
         };
         ContextPayload {
-            source_type: source_type.clone(),
+            source_type,
             application_name: target.application_name,
             process_name: target.process_name,
             window_title: target.title,

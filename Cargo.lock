@@ -658,7 +658,9 @@ dependencies = [
  "deskaide-assistant-core",
  "deskaide-context-core",
  "deskaide-platform-windows",
+ "futures-util",
  "keyring",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "tauri",
@@ -669,6 +671,7 @@ dependencies = [
  "tokio",
  "url",
  "uuid",
+ "windows 0.62.2",
 ]
 
 [[package]]

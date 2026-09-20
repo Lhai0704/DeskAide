@@ -13,7 +13,7 @@
   <div class="heading">
     <p>ASSISTANT AVATAR</p>
     <h3 id="avatar-title">助手形象</h3>
-    <span>当前使用机器人静态图片占位，助手形象将在后续重新规划。</span>
+    <span>选择常驻桌面的助手形象。单击打开助手，按住可拖动位置。</span>
   </div>
 
   <div class="avatar-options" role="radiogroup" aria-label="助手形象">
