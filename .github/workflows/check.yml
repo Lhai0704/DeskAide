@@ -49,6 +49,9 @@ jobs:
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
 
+      - name: Build frontend assets for Tauri
+        run: npm run build
+
       - name: Lint Rust
         run: cargo clippy --workspace --all-targets -- -D warnings
 
@@ -57,4 +60,3 @@ jobs:
 
       - name: Build DeskAide without installer
         run: npm run tauri --workspace @deskaide/desktop -- build --debug --no-bundle
-

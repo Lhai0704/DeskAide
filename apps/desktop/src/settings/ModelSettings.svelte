@@ -2,6 +2,7 @@
   import type { ModelProfile } from '../assistant/model';
   import { avatarPackById, type AvatarPackId } from '../avatar/catalog';
   import AvatarSettings from './AvatarSettings.svelte';
+  import ShortcutSettings from './ShortcutSettings.svelte';
   import ModelProfileForm from './ModelProfileForm.svelte';
   import ThemeSettings from './ThemeSettings.svelte';
   import type { Theme } from './theme';
@@ -46,7 +47,7 @@
   }
   let selectedId = $state(initialSelection());
   let creating = $state(false);
-  let section = $state<'appearance' | 'avatar' | 'models' | 'speech'>('appearance');
+  let section = $state<'appearance' | 'avatar' | 'models' | 'speech' | 'shortcuts'>('appearance');
   let selected = $derived(profiles.find((profile) => profile.id === selectedId) ?? null);
 
   $effect(() => {
@@ -113,6 +114,14 @@
           >{speechSettings.enabled ? '自动朗读已开启' : '自动朗读已关闭'}</small
         ></button
       >
+      <button
+        type="button"
+        class:selected={section === 'shortcuts'}
+        onclick={() => {
+          section = 'shortcuts';
+          creating = false;
+        }}><span>快捷键</span><small>Copilot 键与组合键</small></button
+      >
       <p class="nav-heading">模型配置</p>
       {#each profiles as profile (profile.id)}
         <button
@@ -156,6 +165,8 @@
           status={speechStatus}
           active={speechActive}
         />
+      {:else if section === 'shortcuts'}
+        <ShortcutSettings />
       {:else if section === 'avatar'}
         <AvatarSettings {avatarPackId} {onavatarchange} />
       {:else}

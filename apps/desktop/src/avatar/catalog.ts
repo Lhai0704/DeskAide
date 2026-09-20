@@ -9,6 +9,12 @@ export const AVATAR_PACKS = [
     description: '静态图片占位，助手形象待后续规划',
     root: '/avatars/default-assistant',
   },
+  {
+    id: 'robot-assistant',
+    name: '机器人助手',
+    description: '简洁的经典机器人形象',
+    root: '/avatars/robot-assistant',
+  },
 ] as const;
 
 export type AvatarPackId = (typeof AVATAR_PACKS)[number]['id'];

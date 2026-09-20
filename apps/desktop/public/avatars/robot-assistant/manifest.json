@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "id": "default-assistant",
+  "id": "robot-assistant",
   "name": "机器人助手",
   "version": "1.0.0",
   "renderer": "static",
-  "defaultWidth": 192,
-  "defaultHeight": 288,
+  "defaultWidth": 160,
+  "defaultHeight": 160,
   "states": {
     "idle": {
       "asset": "idle.png",
