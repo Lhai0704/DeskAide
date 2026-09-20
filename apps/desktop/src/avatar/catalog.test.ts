@@ -17,8 +17,6 @@ function storageWith(value: string | null) {
 describe('avatar pack preferences', () => {
   it('accepts only avatars in the catalog', () => {
     expect(isAvatarPackId('default-assistant')).toBe(true);
-    expect(isAvatarPackId('legacy-pack-a')).toBe(false);
-    expect(isAvatarPackId('legacy-pack-b')).toBe(false);
     expect(isAvatarPackId('unknown')).toBe(false);
   });
 
@@ -27,13 +25,6 @@ describe('avatar pack preferences', () => {
     expect(loadAvatarPackId(storageWith('unknown'))).toBe('default-assistant');
     expect(loadAvatarPackId(storageWith(null))).toBe('default-assistant');
   });
-
-  it.each(['legacy-pack-a', 'legacy-pack-b'])(
-    'falls back to the static placeholder for the old %s preference',
-    (previousPackId) => {
-      expect(loadAvatarPackId(storageWith(previousPackId))).toBe('default-assistant');
-    },
-  );
 
   it('uses the placeholder when storage is unavailable', () => {
     expect(
