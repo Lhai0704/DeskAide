@@ -11,6 +11,7 @@ export interface ModelCapabilities {
 export type ProviderType = 'mock' | 'openai_compatible';
 
 export interface ModelProfile {
+  preferFastResponse?: boolean;
   id: string;
   name: string;
   providerType: ProviderType;

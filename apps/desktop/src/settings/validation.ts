@@ -1,6 +1,18 @@
 import type { ModelCapabilities, ModelProfile, ProviderType } from '../assistant/model';
 
+export function supportsFastResponse(baseUrl: string, modelId: string): boolean {
+  try {
+    return (
+      new URL(baseUrl.trim()).hostname === 'generativelanguage.googleapis.com' &&
+      modelId.trim().replace(/^models\//, '') === 'gemini-3.5-flash'
+    );
+  } catch {
+    return false;
+  }
+}
+
 export interface ModelProfileDraft {
+  preferFastResponse: boolean;
   id: string | null;
   name: string;
   providerType: ProviderType;
@@ -14,6 +26,7 @@ export interface ModelProfileDraft {
 }
 
 export interface ModelProfilePayload {
+  preferFastResponse: boolean;
   id: string | null;
   name: string;
   providerType: ProviderType;
@@ -35,6 +48,7 @@ function isSensitiveHeader(name: string): boolean {
 
 export function newProfileDraft(): ModelProfileDraft {
   return {
+    preferFastResponse: true,
     id: null,
     name: '',
     providerType: 'openai_compatible',
@@ -58,6 +72,7 @@ export function newProfileDraft(): ModelProfileDraft {
 
 export function profileToDraft(profile: ModelProfile): ModelProfileDraft {
   return {
+    preferFastResponse: profile.preferFastResponse ?? true,
     id: profile.id,
     name: profile.name,
     providerType: profile.providerType,
@@ -131,6 +146,7 @@ export function toProfilePayload(draft: ModelProfileDraft): ModelProfilePayload 
   const errors = validateModelProfile(draft);
   if (errors.length) throw new Error(errors[0]);
   return {
+    preferFastResponse: draft.preferFastResponse,
     id: draft.id,
     name: draft.name.trim(),
     providerType: draft.providerType,

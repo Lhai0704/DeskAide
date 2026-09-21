@@ -60,6 +60,7 @@ export interface ResponseState {
   revision: number;
 }
 export interface TurnSnapshot {
+  phase?: 'preparing' | 'generating' | 'responding' | 'tool' | 'approval' | 'terminal';
   conversationId: string;
   turnId: string;
   sequence: number;

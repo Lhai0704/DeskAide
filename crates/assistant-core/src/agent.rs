@@ -336,6 +336,7 @@ impl AssistantEventKind {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TurnSnapshot {
+    pub phase: TurnPhase,
     pub conversation_id: String,
     pub turn_id: String,
     pub sequence: u64,
@@ -344,6 +345,18 @@ pub struct TurnSnapshot {
     pub approval: Option<ToolApproval>,
     pub revision: u64,
     pub error: Option<ToolError>,
+}
+
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum TurnPhase {
+    #[default]
+    Preparing,
+    Generating,
+    Responding,
+    Tool,
+    Approval,
+    Terminal,
 }
 
 #[cfg(test)]

@@ -6,149 +6,251 @@
   import {
     AVATAR_PACK_CHANGED_EVENT,
     avatarPackById,
-    isAvatarPackId,
+    discoverPacks,
     loadAvatarPackId,
     type AvatarPackChangedPayload,
-    type AvatarPackId,
   } from './catalog';
-  import { avatarAssetUrl, loadAvatarManifest } from './manifest';
+  import { loadAvatarManifest, avatarAssetUrl } from './manifest';
+  import { loadSettings, persistSettings, preferencesFor } from './preferences';
+  import { avatarDefaults, type AvatarPackManifest } from './types';
+  import { AvatarBehavior, type Presentation } from './behavior/controller';
+  import { AvatarInteraction } from './interaction';
+  import { localCursor, type CursorSample } from './live2d/gaze';
   import StaticAvatar from './renderers/StaticAvatar.svelte';
   import VideoAvatar from './renderers/VideoAvatar.svelte';
-  import type { AvatarPackManifest, AvatarStateName } from './types';
-
-  let manifest: AvatarPackManifest | null = null;
-  let packRoot = avatarPackById(loadAvatarPackId()).root;
-  let state: AvatarStateName = 'idle';
-  let error = '';
-  let lastPosition: { x: number; y: number } | null = null;
-  let loadGeneration = 0;
-
-  onMount(() => {
-    const avatarWindow = getCurrentWindow();
-    void avatarWindow.outerPosition().then((position) => (lastPosition = position));
-    void loadAvatarPack(loadAvatarPackId());
-    const unlistenAvatarChange = listen<AvatarPackChangedPayload>(
-      AVATAR_PACK_CHANGED_EVENT,
-      ({ payload }) => {
-        if (isAvatarPackId(payload.packId)) void loadAvatarPack(payload.packId);
-      },
-    );
-
-    return () => {
-      void unlistenAvatarChange.then((unlisten) => unlisten());
-    };
-  });
-
-  async function loadAvatarPack(packId: AvatarPackId) {
-    const generation = ++loadGeneration;
-    const nextRoot = avatarPackById(packId).root;
+  import Live2DAvatar from './renderers/Live2DAvatar.svelte';
+  const behavior = new AvatarBehavior(),
+    gesture = new AvatarInteraction();
+  let manifest = $state<AvatarPackManifest | null>(null),
+    root = $state(''),
+    error = $state('');
+  let preferences = $state(avatarDefaults());
+  let presentation = $state(behavior.read(0));
+  let cursor = $state<{ x: number; y: number } | null>(null);
+  let generation = 0,
+    disposed = false;
+  let renderKey = $state(0);
+  let button: HTMLButtonElement;
+  async function load(packId?: string) {
+    const token = ++generation;
     error = '';
     try {
-      const nextManifest = await loadAvatarManifest(nextRoot);
-      if (generation !== loadGeneration) return;
-      packRoot = nextRoot;
-      manifest = nextManifest;
-    } catch (cause) {
-      if (generation !== loadGeneration) return;
-      manifest = null;
-      error = cause instanceof Error ? cause.message : '助手形象资源包加载失败';
+      await discoverPacks();
+      const settings = await loadSettings();
+      const pack =
+        avatarPackById(packId ?? settings.packId ?? loadAvatarPackId()) ??
+        avatarPackById('default-assistant');
+      const next = await loadAvatarManifest(pack.root);
+      if (disposed || token !== generation) return;
+      behavior.resetInteraction();
+      root = pack.root;
+      preferences = preferencesFor(settings, next);
+      manifest = next;
+      renderKey++;
+      await invoke('resize_avatar', { width: next.defaultWidth, height: next.defaultHeight });
+      if (!settings.packId && !disposed && token === generation)
+        await persistSettings({ ...settings, packId: pack.id }).catch((e) => {
+          if (!disposed && token === generation) error = `设置保存失败：${String(e)}`;
+        });
+    } catch (e) {
+      if (token === generation && !disposed) {
+        error = String(e);
+        manifest = null;
+      }
     }
   }
-
-  async function onPointerDown(event: PointerEvent) {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    const avatarWindow = getCurrentWindow();
-    const start = lastPosition ?? (await avatarWindow.outerPosition());
-    state = 'activated';
-
-    // Prevent assistant blur-hide while this avatar click/drag is in progress.
-    await invoke('set_avatar_interacting', { interacting: true });
+  async function refreshSettings() {
     try {
-      await avatarWindow.startDragging();
-      const end = await avatarWindow.outerPosition();
-      lastPosition = end;
-      const distance = Math.hypot(end.x - start.x, end.y - start.y);
-      if (distance < 5) await invoke('toggle_assistant');
-    } finally {
-      await invoke('set_avatar_interacting', { interacting: false });
-      window.setTimeout(() => (state = 'idle'), 180);
+      const settings = await loadSettings();
+      if (settings.packId && settings.packId !== manifest?.id) {
+        await load();
+        return;
+      }
+      if (manifest) preferences = preferencesFor(settings, manifest);
+    } catch (e) {
+      error = String(e);
     }
+  }
+  onMount(() => {
+    disposed = false;
+    void load();
+    let busy = false,
+      cursorBusy = false,
+      first = true;
+    const poll = async () => {
+      if (busy) return;
+      busy = true;
+      try {
+        const next = await invoke<Presentation>('get_avatar_presentation');
+        if (!disposed) {
+          behavior.accept(next, performance.now(), first);
+          first = false;
+          presentation = behavior.read(performance.now());
+        }
+      } catch {
+        /* Chat is independent of presentation. */
+      } finally {
+        busy = false;
+      }
+    };
+    void poll();
+    const timer = setInterval(() => {
+      presentation = behavior.read(performance.now());
+      void poll();
+    }, 100);
+    const cursorTimer = setInterval(() => {
+      if (
+        cursorBusy ||
+        document.hidden ||
+        manifest?.renderer !== 'live2d' ||
+        !preferences.mouseTracking ||
+        error
+      )
+        return;
+      cursorBusy = true;
+      void invoke<CursorSample | null>('sample_avatar_cursor')
+        .then((s) => {
+          if (!disposed) cursor = s ? localCursor(s) : null;
+        })
+        .catch(() => {
+          cursor = null;
+        })
+        .finally(() => {
+          cursorBusy = false;
+        });
+    }, 34);
+    const subscriptions = [
+      listen<AvatarPackChangedPayload>(
+        AVATAR_PACK_CHANGED_EVENT,
+        (e) => void load(e.payload.packId),
+      ),
+      listen('avatar-settings-changed', () => void refreshSettings()),
+      listen('avatar-activated', () => {
+        if (!presentation.interaction) activate();
+      }),
+      getCurrentWindow().onScaleChanged(() => {
+        if (manifest)
+          void invoke('resize_avatar', {
+            width: manifest.defaultWidth,
+            height: manifest.defaultHeight,
+          });
+      }),
+    ];
+    return () => {
+      disposed = true;
+      generation++;
+      clearInterval(timer);
+      clearInterval(cursorTimer);
+      for (const p of subscriptions) void p.then((fn) => fn());
+      gesture.cancel();
+      void invoke('set_avatar_interacting', { interacting: false });
+    };
+  });
+  function activate() {
+    behavior.flash('activated', performance.now());
+    presentation = behavior.read(performance.now());
+  }
+  function down(e: PointerEvent) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    gesture.down(e.clientX, e.clientY);
+    button.setPointerCapture(e.pointerId);
+    void invoke('set_avatar_interacting', { interacting: true });
+  }
+  async function move(e: PointerEvent) {
+    if (!gesture.move(e.clientX, e.clientY)) return;
+    try {
+      await getCurrentWindow().startDragging();
+    } finally {
+      gesture.cancel();
+      void invoke('set_avatar_interacting', { interacting: false });
+    }
+  }
+  function up(e: PointerEvent) {
+    const click = gesture.up();
+    if (button.hasPointerCapture(e.pointerId)) button.releasePointerCapture(e.pointerId);
+    if (click) {
+      activate();
+      void invoke('toggle_assistant');
+    }
+    void invoke('set_avatar_interacting', { interacting: false });
+  }
+  function cancel() {
+    gesture.cancel();
+    void invoke('set_avatar_interacting', { interacting: false });
   }
 </script>
 
-<svelte:window oncontextmenu={(event) => event.preventDefault()} />
-
-<button class="avatar" type="button" aria-label="打开 DeskAide" onpointerdown={onPointerDown}>
+<svelte:window oncontextmenu={(e) => e.preventDefault()} />
+<button
+  bind:this={button}
+  class="avatar"
+  data-state={presentation.state}
+  type="button"
+  aria-label="打开 DeskAide"
+  onpointerdown={down}
+  onpointermove={move}
+  onpointerup={up}
+  onpointercancel={cancel}
+  onlostpointercapture={cancel}
+>
   {#if manifest}
-    {#if manifest.renderer === 'video'}
+    {#if manifest.renderer === 'live2d'}
+      {#key renderKey}<Live2DAvatar
+          pack={manifest}
+          {root}
+          input={{ ...presentation, cursorFocus: cursor, preferences }}
+          onerror={(message) => (error = message)}
+        />{/key}
+    {:else if manifest.renderer === 'video'}
       <VideoAvatar
-        src={avatarAssetUrl(manifest, state, packRoot)}
-        alt={manifest.states[state].alt}
+        src={avatarAssetUrl(
+          manifest,
+          presentation.state === 'activated' ? 'activated' : 'idle',
+          root,
+        )}
+        alt={manifest.states.idle.alt}
       />
-    {:else}
-      <StaticAvatar
-        src={avatarAssetUrl(manifest, state, packRoot)}
-        alt={manifest.states[state].alt}
-      />
-    {/if}
-  {:else if error}
-    <span class="fallback" title={error}>DA</span>
-  {:else}
-    <span class="loading" aria-label="正在加载助手形象"></span>
+    {:else}<StaticAvatar
+        src={avatarAssetUrl(
+          manifest,
+          presentation.state === 'activated' ? 'activated' : 'idle',
+          root,
+        )}
+        alt={manifest.states.idle.alt}
+      />{/if}
   {/if}
+  {#if error || !manifest}<span class="fallback" title={error || '正在加载形象'}>DA</span>{/if}
 </button>
 
 <style>
   .avatar {
+    position: relative;
     width: 100%;
     height: 100%;
     padding: 3px;
     border: 0;
     outline: 0;
+    background: transparent;
     cursor: grab;
     user-select: none;
-    background: transparent;
-    -webkit-user-select: none;
+    touch-action: none;
   }
-
   .avatar:active {
     cursor: grabbing;
   }
-
-  .avatar:hover :global(.avatar-media) {
-    scale: 1.025;
-  }
-
-  .fallback,
-  .loading {
+  .fallback {
+    position: absolute;
+    inset: 50% auto auto 50%;
+    transform: translate(-50%, -50%);
     display: grid;
-    width: 116px;
-    height: 116px;
-    margin: auto;
     place-items: center;
-    border: 3px solid rgb(126 226 255 / 70%);
+    width: 100px;
+    height: 100px;
     border-radius: 50%;
     color: #dff8ff;
     background: #172437;
-    box-shadow: 0 8px 18px rgb(0 0 0 / 28%);
+    border: 2px solid #7ee2ff;
     font-size: 28px;
-    font-weight: 750;
-  }
-
-  .loading::after {
-    width: 28px;
-    height: 28px;
-    content: '';
-    border: 3px solid rgb(255 255 255 / 25%);
-    border-top-color: #7ee2ff;
-    border-radius: 50%;
-    animation: spin 800ms linear infinite;
-  }
-
-  @keyframes spin {
-    to {
-      rotate: 360deg;
-    }
   }
 </style>

@@ -17,10 +17,6 @@
         "url": "index.html",
         "width": 160,
         "height": 160,
-        "minWidth": 160,
-        "minHeight": 160,
-        "maxWidth": 160,
-        "maxHeight": 160,
         "resizable": false,
         "decorations": false,
         "transparent": true,
@@ -64,7 +60,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost"
+      "csp": "default-src 'self'; script-src 'self' http://avatar-local.localhost 'wasm-unsafe-eval'; img-src 'self' asset: http://asset.localhost http://avatar-local.localhost blob:; media-src 'self' http://avatar-local.localhost; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost http://avatar-local.localhost"
     }
   },
   "bundle": {

@@ -27,6 +27,7 @@ impl fmt::Debug for SecretString {
 
 #[derive(Clone, Debug)]
 pub struct OpenAiCompatibleConfig {
+    pub prefer_fast_response: bool,
     pub profile_id: String,
     pub base_url: String,
     pub model_id: String,
@@ -38,6 +39,12 @@ pub struct OpenAiCompatibleConfig {
 }
 
 impl OpenAiCompatibleConfig {
+    pub(crate) fn is_google_gemini35(&self) -> bool {
+        self.model_id.trim().trim_start_matches("models/") == "gemini-3.5-flash"
+            && self
+                .base_url()
+                .is_ok_and(|url| url.host_str() == Some("generativelanguage.googleapis.com"))
+    }
     pub fn validate(&self) -> Result<(), ModelError> {
         self.base_url()?;
         if self.model_id.trim().is_empty() {

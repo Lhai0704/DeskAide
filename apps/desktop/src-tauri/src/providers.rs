@@ -26,6 +26,7 @@ pub(super) fn openai_provider(
     api_key: String,
 ) -> Result<OpenAiCompatibleProvider, ModelError> {
     OpenAiCompatibleProvider::new(OpenAiCompatibleConfig {
+        prefer_fast_response: profile.prefer_fast_response,
         profile_id: profile.id.clone(),
         base_url: profile.base_url.clone(),
         model_id: profile.model_id.clone(),

@@ -359,6 +359,10 @@ async fn cancellation_during_approval_clears_waiter_and_stale_events() {
         }
     };
     assert!(!runtime.cancel("stale"));
+    assert_eq!(
+        runtime.latest_snapshot().unwrap().phase,
+        TurnPhase::Approval
+    );
     runtime.cancel_and_wait(&turn).await;
     if let AssistantEventKind::ToolApprovalRequired { approval } = event.kind {
         assert!(
@@ -378,6 +382,10 @@ async fn cancellation_during_approval_clears_waiter_and_stale_events() {
     assert_eq!(
         runtime.snapshot(&turn).unwrap().status,
         TurnStatus::Cancelled
+    );
+    assert_eq!(
+        runtime.latest_snapshot().unwrap().phase,
+        TurnPhase::Terminal
     );
 }
 #[tokio::test]

@@ -15,6 +15,7 @@ vi.mock('./player', () => ({
     append = mocks.append;
     stop = mocks.stop;
     setVolume = () => {};
+    presentation = () => ({ playing: mocks.buffered > 0, level: 0 });
   },
 }));
 import { SpeechController, defaultSpeechSettings } from './controller';
@@ -79,7 +80,7 @@ describe('speech lifecycle', () => {
       text: '一句。',
     });
     await vi.advanceTimersByTimeAsync(500);
-    expect(mocks.invoke).not.toHaveBeenCalled();
+    expect(mocks.invoke.mock.calls.filter((c) => c[0] === 'speak_segment')).toHaveLength(0);
     mocks.buffered = 0;
     await vi.advanceTimersByTimeAsync(100);
     expect(mocks.invoke).toHaveBeenCalledWith('speak_segment', expect.anything());

@@ -65,6 +65,16 @@ Transcript 包含 user/assistant/tool 消息、call ID/参数、结果、工具�
 
 ## 窗口协调
 
+### Avatar presentation
+
+`avatar/behavior` 将权威 turn phase 与真实播放信号转换成 idle/activated/thinking/responding/speaking/error；renderer 不读取 conversation 或 reasoning。`TurnSnapshot.phase` 表示 preparing/generating/responding/tool/approval/terminal，Runtime 不依赖 avatar。avatar WebView 串行读取 Tauri presentation snapshot，以 revision 拒绝迟到结果；快照读取天然补偿漏事件，不转发聊天正文。语音 publisher 使用 WebView epoch + sequence 隔离旧请求，信号只保存在内存并有过期保护。
+
+`SpeechPlayer` 在 GainNode 后通过 AnalyserNode 计算平滑 RMS，用 AudioContext 排程区间判断实际播放。TTS 只发布通用播放信号；隐藏 Assistant 不销毁音频，关闭或新会话立即清零。
+
+Live2D renderer 通过独立本地 SDK adapter 使用官方 Cubism Web Framework 5-r.5/WebGL2。SDK/Core 不进入源码仓库，只有选择 Live2D 才加载。manifest v3 保留 v1/v2；catalog 合并 bundled pack 与受限本地 pack。原生适配只提供窗口 resize、受限文件资源和 GetCursorPos 当前坐标采样。形象不增加 MCP/LLM tool。
+
+形象尺寸来自 manifest，保留底部中心并限制工作区，最大 360×480 逻辑像素；DPI 变化重新协调。鼠标超过 5 个逻辑像素才启动原生拖动。透明区域仍是矩形 hit region。具体资源生命周期、许可与测试边界见 [Live2D](live2d.md)。
+
 Tauri 在启动时创建 `avatar`、`assistant` 和 `context-editor` 三个窗口。Assistant 和上下文编辑器默认隐藏，助手形象窗口不可获取焦点。单击助手形象调用异步 Rust `toggle_assistant` 命令切换面板；全局快捷键在面板隐藏时显示面板，已显示时只聚焦，不再次隐藏。
 
 打开 Assistant 前，Rust 先记录外部前台窗口元数据和 UI Automation 焦点元素，然后再显示并聚焦 Assistant。Rust 根据助手形象所在显示器的物理工作区计算 Assistant 位置，顺序为右、左、下、上，最后执行边界限制。助手形象移动时 Assistant 跟随；停止移动 220ms 后将位置写入 Tauri Store。
@@ -111,4 +121,4 @@ Assistant 支持 420×460 的紧凑模式和最大 720×720 的展开模式。Ru
 
 ## 明确不实现的能力
 
-本次未实现 memory、computer use、鼠标键盘操作、Shell Agent、语音输入/麦克风/ASR/VAD、Live2D/VRM、OCR、浏览器或编辑器扩展、remote MCP、云端服务、WebSocket 插件运行时或插件市场。stdio 程序本身可具有外部访问能力，工具批准不构成 OS 沙箱。
+本次未实现 memory、computer use、鼠标键盘操作、Shell Agent、语音输入/麦克风/ASR/VAD、VRM、OCR、浏览器或编辑器扩展、remote MCP、云端服务、WebSocket 插件运行时或插件市场。Live2D 仅属于本地表现层。stdio 程序本身可具有外部访问能力，工具批准不构成 OS 沙箱。

@@ -7,6 +7,7 @@
     profileToDraft,
     toProfilePayload,
     validateModelProfile,
+    supportsFastResponse,
   } from './validation';
 
   interface Props {
@@ -145,6 +146,14 @@
       <small>密钥不会回填到界面，也不会保存到 Tauri Store。</small>
     </label>
 
+    {#if supportsFastResponse(draft.baseUrl, draft.modelId)}
+      <label>
+        <span
+          ><input type="checkbox" bind:checked={draft.preferFastResponse} disabled={busy} /> 优先快速回应</span
+        >
+        <small>减少 Gemini 的思考时间，适合日常聊天；复杂推理可关闭，使用服务默认思考强度。</small>
+      </label>
+    {/if}
     <div class="checks">
       <label
         ><input type="checkbox" bind:checked={draft.capabilities.supportsStreaming} /> 支持流式输出</label

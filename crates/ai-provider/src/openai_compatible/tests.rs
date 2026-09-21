@@ -99,6 +99,7 @@ async fn connection_test_uses_the_model_detail_endpoint() {
 
 fn config(base_url: String, streaming: bool) -> OpenAiCompatibleConfig {
     OpenAiCompatibleConfig {
+        prefer_fast_response: true,
         profile_id: "profile-1".to_owned(),
         base_url,
         model_id: "test-model".to_owned(),
@@ -116,6 +117,36 @@ fn config(base_url: String, streaming: bool) -> OpenAiCompatibleConfig {
         timeout_seconds: 5,
         custom_headers: BTreeMap::from([("x-app".to_owned(), "DeskAide".to_owned())]),
     }
+}
+
+#[test]
+fn gemini_fast_response_is_scoped_and_can_be_disabled() {
+    let mut c = config(
+        "https://generativelanguage.googleapis.com/v1beta/openai".into(),
+        true,
+    );
+    c.model_id = "gemini-3.5-flash".into();
+    let mut input = request();
+    input.generation_options.temperature = Some(0.7);
+    let body =
+        super::request::ChatCompletionRequest::from_model_request(&c, input.clone()).unwrap();
+    assert_eq!(body["reasoning_effort"], "minimal");
+    assert_eq!(body["stream"], true);
+    assert!(body.get("temperature").is_none());
+    c.prefer_fast_response = false;
+    let body =
+        super::request::ChatCompletionRequest::from_model_request(&c, input.clone()).unwrap();
+    assert!(body.get("reasoning_effort").is_none());
+    c.prefer_fast_response = true;
+    c.base_url = "https://example.com/v1".into();
+    let body =
+        super::request::ChatCompletionRequest::from_model_request(&c, input.clone()).unwrap();
+    assert!(body.get("reasoning_effort").is_none());
+    assert_eq!(body["temperature"], 0.7);
+    c.base_url = "https://generativelanguage.googleapis.com/v1beta/openai".into();
+    c.model_id = "gemini-3.1-pro".into();
+    let body = super::request::ChatCompletionRequest::from_model_request(&c, input).unwrap();
+    assert!(body.get("reasoning_effort").is_none());
 }
 
 fn request() -> ModelRequest {

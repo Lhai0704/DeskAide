@@ -105,6 +105,13 @@ impl AssistantRuntime {
             .map(|active| active.id.clone())?;
         self.snapshot(&id)
     }
+    pub fn latest_snapshot(&self) -> Option<TurnSnapshot> {
+        self.snapshots
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .back()
+            .cloned()
+    }
     pub fn cancel(&self, turn: &str) -> bool {
         let active = self.active.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(a) = active.as_ref().filter(|a| a.id == turn) {
@@ -187,6 +194,7 @@ impl AssistantRuntime {
                 snapshots.pop_front();
             }
             snapshots.push_back(TurnSnapshot {
+                phase: TurnPhase::Preparing,
                 conversation_id: input.conversation_id.clone(),
                 turn_id: turn.clone(),
                 sequence: 0,
@@ -294,6 +302,21 @@ impl<'a> Execution<'a> {
                 return;
             }
             s.sequence += 1;
+            s.phase = match &kind {
+                AssistantEventKind::MessageStarted { .. } => TurnPhase::Generating,
+                AssistantEventKind::TextDelta { text, .. } if !text.is_empty() => {
+                    TurnPhase::Responding
+                }
+                AssistantEventKind::ToolProposed { .. }
+                | AssistantEventKind::ToolStarted { .. } => TurnPhase::Tool,
+                AssistantEventKind::ToolApprovalRequired { .. } => TurnPhase::Approval,
+                AssistantEventKind::ToolCompleted { .. }
+                | AssistantEventKind::ToolFailed { .. } => TurnPhase::Generating,
+                AssistantEventKind::TurnCompleted { .. }
+                | AssistantEventKind::TurnCancelled { .. }
+                | AssistantEventKind::TurnFailed { .. } => TurnPhase::Terminal,
+                _ => s.phase,
+            };
             match &kind {
                 AssistantEventKind::TextDelta { text, .. } => s.content.push_str(text),
                 AssistantEventKind::ToolApprovalRequired { approval } => {

@@ -15,7 +15,8 @@ DeskAide 是一个常驻 Windows 桌面的电子 AI 助手入口。它以可拖�
 - Assistant 面板支持紧凑/展开、临时置顶、失焦隐藏，以及跟随助手形象重新定位。
 - 支持浅色与深色主题，选择会保存在本机并在下次启动时恢复。
 - 默认使用机器人静态形象，支持单击激活和拖动。
-- 助手形象由 Manifest 驱动，当前目录提供机器人静态资源包。
+- 助手形象由 Manifest 驱动，保留 static/video，并支持本地 Live2D v3 pack：窗口外鼠标注视、idle/眨眼、状态动作、点击反馈和真实播放音量驱动嘴型。
+- Live2D SDK/Core 和角色资源需按[本地准备说明](docs/live2d.md)提供；默认仍使用仓库内的机器人形象。
 
 ### 对话与模型
 
@@ -24,6 +25,7 @@ DeskAide 是一个常驻 Windows 桌面的电子 AI 助手入口。它以可拖�
 - 有用户消息的对话自动保存在本机；历史抽屉支持继续对话、重命名和删除。
 - 每条历史记录保存其模型 Profile；载入时会尝试恢复原模型，但应用启动后仍默认进入空白新对话。
 - 支持多个模型 Profile、默认模型、对话中切换模型和手动连接测试。
+- Google 官方兼容端点的 `gemini-3.5-flash` 提供“优先快速回应”（默认开启），使用 `reasoning_effort: minimal` 减少简单聊天的思考等待；关闭后使用服务默认思考级别。该模型保留服务默认采样参数，其他模型不受影响。流式输出不能消除服务开始输出前的等待，实际延迟仍取决于服务和网络。
 - API Key 按 Profile 隔离保存在 Windows Credential Manager，不进入普通配置文件或前端 IPC 响应。
 - 内置不发送网络请求的 Mock Provider，未配置真实模型时也可离线体验和开发；Mock 返回收悉提示，不回显可能含临时上下文的完整输入。
 - Rust 后端向前端提供模型能力和上下文窗口大小，尚不可用的上下文选项会显示明确原因。
@@ -144,7 +146,7 @@ npm run tauri -- build
 ```text
 apps/desktop/              Svelte 前端与 Tauri Windows 应用
   src/assistant/           对话、历史记录和上下文编辑界面
-  src/avatar/              形象资源包加载与静态/视频渲染
+  src/avatar/              形象行为层与 static/video/Live2D 渲染
   src/settings/            主题、形象、快捷键、语音、MCP 和模型 Profile 设置
   src-tauri/               窗口协调、IPC、凭据和本地持久化
 crates/assistant-core/     共享请求、结构化 transcript、AssistantEvent 与工具 DTO
@@ -160,7 +162,8 @@ docs/                      架构、形象资源格式和 Windows 限制
 更多设计说明：
 
 - [当前架构](docs/architecture.md)
-- [静态助手形象资源包格式（v1）](docs/avatar-pack-format.md)
+- [助手形象资源包格式（v1/v2/v3）](docs/avatar-pack-format.md)
+- [Live2D 本地准备、许可与验证](docs/live2d.md)
 - [Windows 已知限制](docs/windows-limitations.md)
 
 ## 隐私与安全边界
@@ -193,3 +196,5 @@ docs/                      架构、形象资源格式和 Windows 限制
 ## 许可证
 
 [MIT](LICENSE)
+
+MIT 仅覆盖 DeskAide 自有代码。Live2D SDK/Core 与第三方模型遵守各自许可，本仓库不包含这些资源；本地准备与发布边界见 [Live2D 文档](docs/live2d.md)。

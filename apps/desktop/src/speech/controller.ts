@@ -38,7 +38,22 @@ export class SpeechController {
   private player = new SpeechPlayer();
   private session: Session | null = null;
   private timer: ReturnType<typeof setInterval>;
+  private presentationTimer: ReturnType<typeof setInterval>;
+  private epoch: Promise<number>;
+  private sequence = 0;
+  private publish() {
+    const s = this.session;
+    const signal = s ? { sessionId: s.id, turnId: s.request, ...this.player.presentation() } : null;
+    const sequence = ++this.sequence;
+    void this.epoch
+      .then((epoch) => invoke('publish_speech_presentation', { epoch, sequence, signal }))
+      .catch(() => {});
+  }
   constructor(private report: (label: string, active: boolean) => void) {
+    this.epoch = invoke<number>('begin_speech_presentation').catch(() => 0);
+    this.presentationTimer = setInterval(() => {
+      if (this.session) this.publish();
+    }, 34);
     this.timer = setInterval(() => {
       const s = this.session;
       if (!s) return;
@@ -116,6 +131,7 @@ export class SpeechController {
     const s = this.session;
     this.session = null;
     this.player.stop();
+    this.publish();
     this.report('', false);
     if (s)
       void invoke('cancel_speech', { sessionId: s.id }).catch(() =>
@@ -125,6 +141,7 @@ export class SpeechController {
   dispose() {
     this.stop();
     clearInterval(this.timer);
+    clearInterval(this.presentationTimer);
   }
   private fail(error: unknown) {
     this.stop();

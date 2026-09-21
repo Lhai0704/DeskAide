@@ -4,9 +4,26 @@ import {
   parseCustomHeaders,
   toProfilePayload,
   validateModelProfile,
+  supportsFastResponse,
 } from './validation';
 
 describe('model profile validation', () => {
+  it('limits the fast-response option to the verified official Gemini model', () => {
+    expect(
+      supportsFastResponse(
+        'https://generativelanguage.googleapis.com/v1beta/openai',
+        'gemini-3.5-flash',
+      ),
+    ).toBe(true);
+    expect(supportsFastResponse('https://example.com', 'gemini-3.5-flash')).toBe(false);
+    expect(
+      supportsFastResponse(
+        'https://generativelanguage.googleapis.com/v1beta/openai',
+        'gemini-3.1-pro',
+      ),
+    ).toBe(false);
+    expect(newProfileDraft().preferFastResponse).toBe(true);
+  });
   it('normalizes a valid OpenAI-compatible profile', () => {
     const draft = newProfileDraft();
     Object.assign(draft, {

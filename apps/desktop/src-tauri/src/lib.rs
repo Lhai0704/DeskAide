@@ -1,4 +1,5 @@
 mod assistant;
+mod avatar;
 mod context_commands;
 mod conversation_history;
 mod credentials;
@@ -285,6 +286,7 @@ async fn toggle_assistant(app: AppHandle, state: State<'_, AppState>) -> Result<
         assistant.set_always_on_top(pinned).map_err(display_error)?;
         position_assistant(&app)?;
         assistant.show().map_err(display_error)?;
+        let _ = app.emit_to(AVATAR_LABEL, "avatar-activated", ());
         assistant.set_focus().map_err(display_error)?;
         assistant
             .emit(
@@ -593,12 +595,58 @@ pub fn run() {
         )
         .manage(AppState::new())
         .manage(speech::SpeechState::default())
+        .manage(avatar::PresentationState::default())
+        .register_uri_scheme_protocol("avatar-local", |ctx, request| {
+            let result = avatar::root(ctx.app_handle()).and_then(|root| {
+                avatar::resolve_resource_uri(&root, request.uri().path().trim_start_matches('/'))
+            });
+            match result {
+                Ok(path) => {
+                    let mime = match path.extension().and_then(|x| x.to_str()).unwrap_or("") {
+                        "js" => "text/javascript",
+                        "json" => "application/json",
+                        "png" => "image/png",
+                        "jpg" | "jpeg" => "image/jpeg",
+                        "webp" => "image/webp",
+                        "webm" => "video/webm",
+                        "mp4" => "video/mp4",
+                        "wasm" => "application/wasm",
+                        _ => "application/octet-stream",
+                    };
+                    match std::fs::read(path) {
+                        Ok(bytes) => tauri::http::Response::builder()
+                            .header("Content-Type", mime)
+                            .header("X-Content-Type-Options", "nosniff")
+                            .header("Access-Control-Allow-Origin", "*")
+                            .body(bytes)
+                            .unwrap(),
+                        Err(_) => tauri::http::Response::builder()
+                            .status(404)
+                            .body(Vec::new())
+                            .unwrap(),
+                    }
+                }
+                Err(_) => tauri::http::Response::builder()
+                    .status(404)
+                    .body(Vec::new())
+                    .unwrap(),
+            }
+        })
         .manage(shortcuts::ShortcutState::default())
         .invoke_handler(tauri::generate_handler![
             shortcuts::get_shortcut_settings,
             shortcuts::get_shortcut_error,
             shortcuts::save_shortcut_settings,
             speech::get_speech_settings,
+            avatar::begin_speech_presentation,
+            avatar::publish_speech_presentation,
+            avatar::get_avatar_presentation,
+            avatar::list_local_avatar_packs,
+            avatar::open_avatar_directory,
+            avatar::get_avatar_settings,
+            avatar::save_avatar_settings,
+            avatar::sample_avatar_cursor,
+            avatar::resize_avatar,
             speech::save_speech_settings,
             speech::check_speech_service,
             speech::speech_references,
@@ -676,6 +724,7 @@ mod tests {
         let mut profiles = ProfileCollection::default();
         let remote = profiles
             .save(ModelProfileInput {
+                prefer_fast_response: true,
                 id: Some("remote".to_owned()),
                 name: "Remote".to_owned(),
                 provider_type: ProviderType::OpenAiCompatible,

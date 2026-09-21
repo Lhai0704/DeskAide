@@ -57,7 +57,12 @@ impl ChatCompletionRequest {
             return Err(ModelError::MissingUserText);
         }
         let mut body = json!({"model":config.model_id, "messages":messages, "stream":config.capabilities.supports_streaming});
-        if let Some(value) = request.generation_options.temperature {
+        let gemini35 = config.is_google_gemini35();
+        if gemini35 && config.prefer_fast_response {
+            body["reasoning_effort"] = json!("minimal");
+        }
+        // Gemini 3.x is tuned for the service's default sampling settings.
+        if let Some(value) = request.generation_options.temperature.filter(|_| !gemini35) {
             body["temperature"] = json!(value);
         }
         if let Some(value) = request

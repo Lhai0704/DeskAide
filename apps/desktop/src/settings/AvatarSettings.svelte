@@ -1,5 +1,20 @@
 <script lang="ts">
-  import { AVATAR_PACKS, type AvatarPackId } from '../avatar/catalog';
+  import {
+    AVATAR_PACKS,
+    discoverPacks,
+    avatarPackById,
+    type AvatarPackId,
+  } from '../avatar/catalog';
+  import { onMount } from 'svelte';
+  import { invoke } from '@tauri-apps/api/core';
+  import {
+    loadSettings,
+    persistSettings,
+    preferencesFor,
+    type AvatarSettings,
+  } from '../avatar/preferences';
+  import { loadAvatarManifest } from '../avatar/manifest';
+  import { avatarDefaults, type AvatarPackManifest, type AvatarPreferences } from '../avatar/types';
 
   interface Props {
     avatarPackId: AvatarPackId;
@@ -7,6 +22,73 @@
   }
 
   let { avatarPackId, onavatarchange }: Props = $props();
+  let packs = $state([...AVATAR_PACKS]);
+  let directory = $state('');
+  let error = $state('');
+  let runtimeReady = $state(false);
+  let manifest = $state<AvatarPackManifest | null>(null);
+  let preferences = $state(avatarDefaults());
+  let settings: AvatarSettings = { packId: null, preferences: {} };
+  let saving = $state(false);
+  let generation = 0;
+  async function refresh() {
+    try {
+      const result = await discoverPacks();
+      packs = [...AVATAR_PACKS];
+      directory = result.directory;
+      runtimeReady = result.runtimeReady;
+      settings = await loadSettings();
+      await select(settings.packId ?? avatarPackId, false);
+    } catch (e) {
+      error = String(e);
+    }
+  }
+  async function select(id: string, save = true) {
+    if (saving) return;
+    saving = true;
+    const token = ++generation;
+    try {
+      const pack = avatarPackById(id) ?? AVATAR_PACKS[0];
+      const m = await loadAvatarManifest(pack.root);
+      if (token !== generation) return;
+      manifest = m;
+      preferences = preferencesFor(settings, m);
+      if (save) {
+        settings = { ...settings, packId: pack.id };
+        await persistSettings(settings);
+      }
+      if (save && token === generation) onavatarchange(pack.id);
+      error = '';
+    } catch (e) {
+      error = String(e);
+    } finally {
+      saving = false;
+    }
+  }
+  async function change(patch: Partial<AvatarPreferences>) {
+    if (!manifest || saving) return;
+    saving = true;
+    try {
+      const next = { ...preferences, ...patch };
+      await persistSettings({
+        ...settings,
+        preferences: { ...settings.preferences, [manifest.id]: next },
+      });
+      settings.preferences[manifest.id] = next;
+      preferences = next;
+      error = '';
+    } catch (e) {
+      error = String(e);
+    } finally {
+      saving = false;
+    }
+  }
+  onMount(() => {
+    void refresh();
+    return () => {
+      generation++;
+    };
+  });
 </script>
 
 <section class="avatar-settings" aria-labelledby="avatar-title">
@@ -17,16 +99,17 @@
   </div>
 
   <div class="avatar-options" role="radiogroup" aria-label="助手形象">
-    {#each AVATAR_PACKS as pack (pack.id)}
+    {#each packs as pack (pack.id)}
       <button
         type="button"
-        class:selected={avatarPackId === pack.id}
+        class:selected={manifest?.id === pack.id}
+        disabled={saving}
         role="radio"
-        aria-checked={avatarPackId === pack.id}
-        onclick={() => onavatarchange(pack.id)}
+        aria-checked={manifest?.id === pack.id}
+        onclick={() => void select(pack.id)}
       >
         <span class="preview">
-          <img src={`${pack.root}/idle.png`} alt="" />
+          <img src={pack.preview ?? `${pack.root}/idle.png`} alt="" />
         </span>
         <span class="option-copy">
           <strong>{pack.name}</strong>
@@ -36,9 +119,78 @@
       </button>
     {/each}
   </div>
+  {#if manifest?.renderer === 'live2d'}
+    <div class="controls">
+      {#each [['mouseTracking', '注视鼠标'], ['idleAnimation', '待机动画'], ['autoBlink', '自动眨眼'], ['motions', '模型动作']] as [key, label] (key)}
+        <label
+          ><input
+            type="checkbox"
+            disabled={saving}
+            checked={preferences[key as keyof AvatarPreferences] === true}
+            onchange={(e) => void change({ [key]: e.currentTarget.checked })}
+          />{label}</label
+        >
+      {/each}
+      <label
+        >模型大小 <input
+          type="range"
+          min="0.5"
+          max="2"
+          step="0.05"
+          value={preferences.scale}
+          disabled={saving}
+          onchange={(e) => void change({ scale: Number(e.currentTarget.value) })}
+        /></label
+      >
+      <label
+        >垂直位置 <input
+          type="range"
+          min="-0.4"
+          max="0.4"
+          step="0.02"
+          value={preferences.verticalPosition}
+          disabled={saving}
+          onchange={(e) => void change({ verticalPosition: Number(e.currentTarget.value) })}
+        /></label
+      >
+      <button type="button" disabled={saving} onclick={() => void change(avatarDefaults(manifest!))}
+        >恢复默认</button
+      >
+      <small>立即生效。透明边缘仍占用鼠标区域；模型大小不会扩大窗口。</small>
+    </div>
+  {/if}
+  <div class="controls">
+    <small
+      >{runtimeReady
+        ? '本地 Live2D runtime 已就绪'
+        : 'Live2D runtime 未安装；静态形象仍可使用。'}</small
+    ><small>{directory}</small>
+    <button
+      type="button"
+      onclick={() => void invoke('open_avatar_directory').catch((e) => (error = String(e)))}
+      >打开本地形象目录</button
+    >
+    <button type="button" disabled={saving} onclick={() => void refresh()}>刷新形象列表</button>
+  </div>
+  {#if error}<p role="alert">{error}</p>{/if}
 </section>
 
 <style>
+  .controls {
+    display: grid;
+    gap: 10px;
+  }
+  .controls label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--theme-text);
+    font-size: 12px;
+  }
+  .controls small {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
   .avatar-settings {
     display: grid;
     max-width: 560px;

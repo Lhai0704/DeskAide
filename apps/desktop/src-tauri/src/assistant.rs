@@ -21,6 +21,11 @@ pub struct AssistantServices {
     settings_gate: tokio::sync::Mutex<()>,
     settings_error: Mutex<Option<String>>,
 }
+pub fn presentation_snapshot(app: &AppHandle) -> Option<TurnSnapshot> {
+    app.try_state::<AssistantServices>()?
+        .runtime
+        .latest_snapshot()
+}
 fn message(error: ToolError) -> String {
     error.message
 }

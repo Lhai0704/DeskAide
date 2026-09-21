@@ -724,6 +724,7 @@ dependencies = [
  "deskaide-tool-core",
  "futures-util",
  "keyring",
+ "percent-encoding",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

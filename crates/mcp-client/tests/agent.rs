@@ -71,6 +71,7 @@ async fn approved_mcp_tool_roundtrip_and_real_history_reload() {
     });
     let provider = Arc::new(
         OpenAiCompatibleProvider::new(OpenAiCompatibleConfig {
+            prefer_fast_response: true,
             profile_id: "fixture".into(),
             base_url: format!("http://{address}"),
             model_id: "fixture".into(),

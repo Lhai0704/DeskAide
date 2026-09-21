@@ -6,6 +6,8 @@
     "apps/desktop"
   ],
   "scripts": {
+    "prepare:live2d": "node scripts/prepare-live2d.mjs",
+    "test:live2d": "node scripts/test-live2d.mjs",
     "dev": "npm run dev --workspace @deskaide/desktop",
     "tauri": "npm run tauri --workspace @deskaide/desktop --",
     "build": "npm run build --workspace @deskaide/desktop",
