@@ -19,5 +19,6 @@
 *.key
 /settings.json
 /conversation-history.json
+/conversation-history-v2.json
 /test-voice/
 /generated/

@@ -1,10 +1,10 @@
 use async_trait::async_trait;
 use deskaide_assistant_core::{
-    ContentBlock, ModelCapabilities, ModelRequest, ModelResponse, ResponseEvent,
+    ContentBlock, ModelCapabilities, ModelRequest, ModelResponse, ProviderEvent,
 };
 use tokio::time::Duration;
 
-use crate::{ModelError, ModelProvider, ResponseEventSender, send};
+use crate::{ModelError, ModelProvider, ProviderEventSender, send};
 
 #[derive(Debug, Default)]
 pub struct MockProvider;
@@ -23,6 +23,7 @@ impl ModelProvider for MockProvider {
 
     fn capabilities(&self) -> ModelCapabilities {
         ModelCapabilities {
+            supports_tools: false,
             supports_text: true,
             supports_images: false,
             supports_streaming: true,
@@ -35,9 +36,9 @@ impl ModelProvider for MockProvider {
     async fn complete(
         &self,
         request: ModelRequest,
-        event_sender: ResponseEventSender,
+        event_sender: ProviderEventSender,
     ) -> Result<ModelResponse, ModelError> {
-        let prompt = request
+        let _prompt = request
             .messages
             .iter()
             .rev()
@@ -48,85 +49,24 @@ impl ModelProvider for MockProvider {
             })
             .ok_or(ModelError::MissingUserText)?;
 
-        let response_text = format!(
-            "Mock 助手已收到你的问题：「{prompt}」\n\n切换到已配置的 OpenAI-Compatible Profile 后即可使用真实模型。"
-        );
-        let request_id = request.request_id;
+        // Do not echo the composed prompt: it may contain turn-only desktop context.
+        let response_text = "Mock 助手已收到你的问题。\n\n切换到已配置的 OpenAI-Compatible Profile 后即可使用真实模型。".to_owned();
 
-        send(
-            &event_sender,
-            ResponseEvent::Started {
-                request_id: request_id.clone(),
-            },
-        )?;
         for chunk in response_text.chars().collect::<Vec<_>>().chunks(5) {
             tokio::time::sleep(Duration::from_millis(30)).await;
             send(
                 &event_sender,
-                ResponseEvent::Delta {
-                    request_id: request_id.clone(),
-                    text: chunk.iter().collect(),
-                },
-            )?;
+                ProviderEvent::TextDelta(chunk.iter().collect()),
+            )
+            .await?;
         }
 
         let response = ModelResponse {
+            tool_calls: vec![],
+            usage: None,
             content: response_text,
             finish_reason: "stop".to_owned(),
         };
-        send(
-            &event_sender,
-            ResponseEvent::Completed {
-                request_id,
-                response: response.clone(),
-            },
-        )?;
         Ok(response)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use deskaide_assistant_core::{GenerationOptions, MessageRole, ModelMessage};
-
-    #[tokio::test]
-    async fn mock_provider_streams_a_complete_response() {
-        let provider = MockProvider::new();
-        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
-        let request = ModelRequest {
-            request_id: "request-1".to_owned(),
-            model_profile_id: provider.id().to_owned(),
-            conversation_id: "conversation-1".to_owned(),
-            system_prompt: None,
-            messages: vec![ModelMessage {
-                role: MessageRole::User,
-                content: vec![ContentBlock::Text {
-                    text: "你好".to_owned(),
-                }],
-            }],
-            context: Vec::new(),
-            generation_options: GenerationOptions::default(),
-        };
-
-        let response = provider.complete(request, sender).await.unwrap();
-        let mut events = Vec::new();
-        while let Some(event) = receiver.recv().await {
-            events.push(event);
-        }
-        assert!(response.content.contains("你好"));
-        assert!(matches!(
-            events.first(),
-            Some(ResponseEvent::Started { .. })
-        ));
-        assert!(
-            events
-                .iter()
-                .any(|event| matches!(event, ResponseEvent::Delta { .. }))
-        );
-        assert!(matches!(
-            events.last(),
-            Some(ResponseEvent::Completed { .. })
-        ));
     }
 }

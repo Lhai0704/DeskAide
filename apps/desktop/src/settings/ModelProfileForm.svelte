@@ -187,6 +187,14 @@
     {#if error}<p class="error">{error}</p>{/if}
     {#if notice}<p class="notice">{notice}</p>{/if}
 
+    <label
+      ><input
+        type="checkbox"
+        bind:checked={draft.capabilities.supportsTools}
+        disabled={busy}
+      />支持工具调用（仅适用于支持 tools 的模型）</label
+    >
+
     <div class="actions">
       {#if profile}
         <button

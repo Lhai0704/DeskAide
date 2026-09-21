@@ -223,6 +223,7 @@ pub fn mock_profile() -> ModelProfile {
         base_url: String::new(),
         model_id: "mock-local".to_owned(),
         capabilities: ModelCapabilities {
+            supports_tools: false,
             supports_text: true,
             supports_images: false,
             supports_streaming: true,

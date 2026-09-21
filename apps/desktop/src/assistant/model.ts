@@ -1,4 +1,5 @@
 export interface ModelCapabilities {
+  supportsTools: boolean;
   supportsText: boolean;
   supportsImages: boolean;
   supportsStreaming: boolean;
@@ -70,11 +71,6 @@ export interface ContextCollectionResult {
   characterCount: number;
   truncated: boolean;
   message: string;
-}
-
-export interface SubmitModelRequestResult {
-  requestId: string;
-  contextResults: ContextCollectionResult[];
 }
 
 export function windowLabel(target: TargetWindow): string {

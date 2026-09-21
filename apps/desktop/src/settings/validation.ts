@@ -41,6 +41,7 @@ export function newProfileDraft(): ModelProfileDraft {
     baseUrl: '',
     modelId: '',
     capabilities: {
+      supportsTools: false,
       supportsText: true,
       supportsImages: false,
       supportsStreaming: true,

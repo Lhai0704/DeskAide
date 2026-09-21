@@ -3,17 +3,65 @@
 ## 依赖方向
 
 ```text
-assistant-core
-    ↑             ↑
-ai-provider   context-core
-                    ↑
-             platform-windows
+assistant-core：共享 DTO、AssistantEvent、Session / TranscriptMessage
+    ↑
+ai-provider / context-core / tool-core：领域接口与实现
+    ↑
+assistant-runtime：上下文组合、hooks、turn 状态机和工具循环
 
-desktop-tauri → 上述所有 crate
-desktop-svelte → 仅通过 Tauri IPC 和事件访问后端
+mcp-client → tool-core：stdio 工具适配与进程生命周期
+platform-windows → context-core：Windows 原生采集
+Tauri → 上述 crate：组合入口、IPC、持久化与桌面生命周期
+Svelte → Tauri IPC / assistant-event：UI 与语音消费
 ```
 
-`assistant-core` 不依赖 UI、Tauri 或平台 API。`ModelProvider` 和 `PlatformIntegration` 作为 trait object 注入桌面状态，后续替换实现不需要修改 Assistant UI。
+核心 crate 不依赖 Tauri。`assistant.rs` 是组合入口与聊天/MCP IPC；`providers.rs` 创建 Provider 并取得凭据；`context_commands.rs` 保留桌面预览/编辑适配；窗口协调和快捷键仍使用原实现。
+
+## Runtime 与事件
+
+UI 提交 `submit_turn`：conversation ID、全新 turn UUID、预期 revision、问题和明确添加的草稿。后端 `SessionRepository` 是 transcript 的唯一来源，UI 不再从气泡拼模型历史。`AssistantRuntime::start` 在异步上下文采集、MCP 发现和模型请求之前注册身份；新 turn 取消并等待上一 turn 完成清理。
+
+`AssistantEvent` 为版本化 tagged enum，使用 camelCase，携带 conversationId、turnId、单调递增 sequence。事件覆盖 turn 起止、上下文结果、每步 assistant message 边界、文字/推理增量、工具提议/批准/执行结果和 usage。reasoning 只作为实时事件，不入历史或语音。
+
+Provider 仅输出 `ProviderEvent` 增量和最终 `ModelResponse`；模型完成一次请求不等于整个 turn 完成。核心事件通道容量 256，UI 出口发送最多等待一秒；权威 turn snapshot 保留最近 16 轮，有界响应内容。Svelte 按 conversation/turn/sequence 过滤迟到或重复事件，终态后不接受增量；WebView 重新订阅时通过 `get_active_turn_snapshot` 找回运行中的请求，序号缺口与丢失终态通过 `get_turn_snapshot` 恢复，恢复文字不触发朗读。
+
+取消 token 覆盖上下文 future、HTTP、hooks、批准及工具执行。唯一终态在最终持久化后发出；新旧任务不能互相清空句柄。失败的持久化明确报错，不将未保存的结果宣称已保存。取消外部工具不是撤销操作：未确认结果保留 unknown/interrupted，不自动重试。
+
+## Context Registry 与 hooks
+
+`context-core` 复用平台采集、预算截断和错误映射，新增 `ContextRegistry`：source key、typed ContextPayload、replace-self / append-self、克隆隔离的 snapshot、clear / reset。每轮创建独立 registry，本次唯一 scope 是 CurrentTurn。最多 128 个来源、每来源 128 项、单项约 250 KiB、合计 1 MiB；操作历史最多 128 条，仅含操作、数量、字节和序号，不含正文或窗口标题。
+
+桌面文字渲染从 Provider 移至 runtime prompt composition，仍明确标记为不可信引用。预算和 UI Automation 三秒超时保持；一轮中的工具循环复用同一份内存引用，不重新采集。原始桌面内容、草稿和推理不进入 SessionRepository。
+
+`HookRegistry` 按注册顺序执行 typed phase + HookData：组合前后、模型请求前、文字/推理增量、工具提议/开始/结束和 turn 终态。提供只读 prompt/messages/request/call/result 数据；订阅 handle 显式 unsubscribe 或 Drop 清理，registry 可 clear，最多 128 listeners。分发使用注册快照，执行回调不持锁。单回调最多 200ms，观测失败/超时仅记录 ID、阶段和固定错误类别并在本轮停用；仅请求前显式 guard 可阻止发送。权限判断和持久化不放在可失败的观测 hook 中。
+
+## 工具循环与权限
+
+`tool-core` 注册稳定 ID、模型调用名、展示名、JSON Schema、来源、风险及定义 revision；重复 ID/name 报错，支持按 MCP owner 清理。Schema 本地验证，不加载网络/文件 `$ref`；不支持外部引用或 `$id` 基址。参数完整解析并验证后才可能执行。工具结果统一为结构化 ToolResult / ToolError。
+
+风险枚举为 ReadOnly / UserData / Mutating / ExternalSideEffect / Unknown。只有内部实现明确声明的 ReadOnly 自动执行，所有 MCP（包括自报只读）要求逐次批准。批准绑定 turn、call、定义及参数快照；无永久权限。变更/删除 server 会撤销工具，使等待失效；执行前再次校验定义。拒绝和超时作为工具结果交回模型。
+
+同一步的多工具按返回顺序串行批准和执行，全部结果配对后再次请求模型。集中默认限制：8 次模型请求、单步 16 个/整轮 32 个调用、工具 60 秒、批准 5 分钟、整轮 15 分钟，参数 64 KiB、结果 128 KiB。超过限制不裁剪参数后执行；工具失败通常仍可由模型继续处理。
+
+`OpenAiCompatibleProvider` 支持 JSON/SSE、多个交错 tool-call delta、混合文字、usage、assistant tool_calls 和 role:tool 配对结果。流结束才提交完整调用；截断流不执行。Profile 的 supportsTools 默认 false；关闭时不发送 tools/tool_choice，并把旧工具记录投影为明确标记的参考文字，存储仍保持结构化。不自动重发失败请求。
+
+## MCP stdio
+
+`mcp-client` 使用官方 `rmcp = 3.4.0` 的 client/async-rw，负责 initialize、分页 tools/list、tools/call、超时、取消、退出检测和清理；无 HTTP/SSE/OAuth/server features。模型别名由 server ID 与原始工具名生成稳定哈希，执行器保存精确原名映射。
+
+程序以 executable + args 启动，stdout 是有上限的协议通道（单帧 1 MiB），stderr 独立排空且不记录正文。Windows Job Object、隐藏控制台和 KillOnDrop 管理自有进程树；正常退出先关闭 stdio，限时后终止子树。SDK 不获得 sampling、elicitation 或桌面控制能力。
+
+设置仅加载不启动；支持工具的 turn 按需连接 enabled servers。并发启动在每 server 的锁内合并，批准和执行持有租约，空闲 5 分钟退出；崩溃标记 failed，由用户重连，无无限重启。设置页测试创建独立临时 manager 并清理。详细安全与配置限制见 [MCP 说明](mcp.md)。
+
+## 结构化历史 v2
+
+`conversation_history.rs` 使用串行锁、revision CAS、临时文件写入 + sync + 原子替换保存 `conversation-history-v2.json`，总上限 64 MiB；满时报告错误，不自动删除记录。版本、消息 ID 和 tool-call/result 配对均验证。用户消息、调用前 pending 结果、工具完成和 turn 终态等语义边界保存，不按 token 落盘。
+
+首次读取旧 `conversation-history.json` v1（包括 Store 的 history 包装）后转换纯文字消息，验证成功写独立 v2，原 v1 保留。存在 v2 时绝不回退 v1，避免已删除对话复活。未知版本/损坏/写入失败保留原文件并报错。重启清理 activeTurn，未完成工具结果保持 interrupted/unknown，不重执行。
+
+Transcript 包含 user/assistant/tool 消息、call ID/参数、结果、工具来源与风险、turnStatus、note/omitted；UI 只投影可见消息。含临时桌面上下文时先持久化省略占位，再等待批准；单独勾选“保存参数和结果”才允许本次原文落盘。未勾选仍保留调用关系、来源及状态，下一轮模型能看到明确的 unavailable 标记。没有桌面上下文的调用按通常规则保存。助手回答主动引用的文字仍随回答保存，和原有聊天行为一致。
+
+历史保留标题、Profile、时间戳、排序、重命名和删除，启动仍默认空白会话。这不是 Memory；没有自动提取、跨会话注入或后台上下文采集。
 
 ## 窗口协调
 
@@ -27,29 +75,10 @@ Tauri 在启动时创建 `avatar`、`assistant` 和 `context-editor` 三个窗�
 
 标准 Copilot 键的 Win + Shift + F23 由专用 Windows 消息线程上的低级键盘钩子处理。钩子仅抑制匹配的 F23 按下与抬起，通过通道通知激活逻辑；长按去重，不采集或保存键入文字。关闭开关或退出程序后恢复系统行为，不更改系统按键映射。启动注册或监听失败会显示在快捷键设置页，点击入口仍可使用。
 
-## 模型请求数据流
-
-```text
-Assistant 输入
-  → submit_model_request（当前所选对话的完整文字历史）
-  → 按用户本次选择加入已确认的窗口文字草稿，并按需采集激活前选中文字
-  → 按模型上下文窗口限制长度
-  → 读取当前 ModelProfile
-  → 按 Profile 从 CredentialStore 取得 API Key
-  → 构造 MockProvider 或 OpenAiCompatibleProvider
-  → Tokio mpsc ResponseEvent
-  → Tauri model-response 事件
-  → Svelte 流式渲染
-```
-
-核心层的事件发送器不依赖 Tauri，因此 Provider、测试和其他前端都可复用同一接口。真实 HTTP 请求由可取消的 Tauri 异步任务持有；停止生成会 abort 任务并释放响应流。
-
-`OpenAiCompatibleProvider` 把以 `/v1` 结尾和 Provider 根路径两类 Base URL 统一为 `/v1/chat/completions`。请求支持 system/user/assistant、多轮文字、temperature 和 max_tokens。用户授权的桌面文字以明确标记的不可信引用区块加入当前用户消息，不进入后续会话历史。响应层分别处理标准 JSON 与增量 SSE，并把 HTTP、网络、超时、格式和流中断映射为稳定错误代码。
-
 ## 语音播报数据流
 
 ```text
-model-response → SpeechText 增量过滤与分句
+AssistantEvent 文字生命周期 → SpeechText 增量过滤与分句
   → SpeechController（会话快照、串行片段队列、15 秒播放缓冲门槛）
   → speak_segment（Rust / 本地 HTTP）
   → fast-qwen3-tts /generate/stream（persist=false）
@@ -58,7 +87,7 @@ model-response → SpeechText 增量过滤与分句
 
 语音设置独立存为 Tauri Store `settings.json` 的 `speech` 项，包含开关、音量、参考声音文件标识、模型及本地项目目录。`get_speech_settings`、`save_speech_settings` 管理设置，`check_speech_service`、`speech_references` 负责服务探测和素材列表。前端不直接访问 HTTP，不持久化合成音频。
 
-每个播报会话固定声音和模型配置；所有 Channel 消息携带会话、文字请求与片段 ID。停止朗读立即关闭 AudioContext 并丢弃迟到消息，再通过 `cancel_speech` 取消后端任务。服务端在加载结束或音频分块处检查取消，Rust 在旧 GPU 工作结束前保持队列串行。隐藏窗口不销毁播报会话；新问题、切换对话或停止生成会取消它。
+每个 turn 固定播报会话、声音和模型配置；messageCompleted 刷新分句余量，turnCompleted 结束本轮，不朗读推理、工具参数/结果或批准卡片。待合成队列最多 128 段 / 64,000 字符，超限仅结束语音。所有 Channel 消息携带会话、文字请求与片段 ID。停止朗读立即关闭 AudioContext 并丢弃迟到消息，再通过 `cancel_speech` 取消后端任务。服务端在加载结束或音频分块处检查取消，Rust 在旧 GPU 工作结束前保持队列串行。隐藏窗口不销毁播报会话；新问题、切换对话或停止生成会取消它。
 
 Rust 合并并发启动请求、验证 TTS 服务身份和临时播报/取消能力，使用项目内 Python 与离线环境启动服务。已存在的兼容服务直接复用。自启服务接收 `DESKAIDE_PARENT_PID`，持有 DeskAide 的 Windows 进程句柄，父进程退出后结束运行；正常退出回调也清理自有进程树。手动启动的服务不受影响。
 
@@ -74,14 +103,12 @@ TTS 暂不可用、忙碌、超时或音频格式错误只会结束本轮语音�
 
 Rust 通过 `get_assistant_bootstrap` 暴露当前模型 Profile 和 `ModelCapabilities`，通过 `assistant-shown` 暴露本次外部目标。Svelte 只在目标存在时启用选中文字和窗口文字，并展示每项的成功、不可用、失败或截断结果；网页和图片项继续显示明确的未实现原因。
 
-每次请求都注册唯一请求 ID 和可取消任务句柄。`stop_generation` 仅取消匹配的活动请求，并发送 `Cancelled` 事件；前端 reducer 会忽略其他请求的迟到事件。每次请求会按原角色顺序发送当前所选对话的完整文字历史。
-
-有用户消息的会话通过独立的 Tauri Store 文件 `conversation-history.json` 持久化。存储数据带版本号，包含标题、最近使用的模型 Profile、可见消息和时间戳；列表按最近更新时间排序。应用启动时创建空白会话，只有用户主动从历史抽屉选择记录后才恢复旧对话。流式响应仅在完成、失败或停止时写入，不按增量频繁落盘。
-
-历史对话不是记忆层：窗口正文、选中文字、上下文草稿和采集结果仍只参与当次请求，不写入历史，也不会在不同对话之间自动注入。
-
 Assistant 支持 420×460 的紧凑模式和最大 720×720 的展开模式。Rust 按当前 DPI 转换尺寸、限制到助手形象所在显示器工作区，并复用窗口定位算法重新靠近助手形象。
 
 ## 平台扩展
 
 当前只有 `platform-windows` 实现可见窗口枚举、外部窗口追踪、选中文字和指定窗口的可访问文字。UI Automation 在专用 COM 工作线程执行并为单次采集设置三秒超时；截图方法仍明确返回 `Unsupported`。未来新增平台时创建独立 crate，实现 `PlatformIntegration`，并在各自构建目标的组合入口注入。
+
+## 明确不实现的能力
+
+本次未实现 memory、computer use、鼠标键盘操作、Shell Agent、语音输入/麦克风/ASR/VAD、Live2D/VRM、OCR、浏览器或编辑器扩展、remote MCP、云端服务、WebSocket 插件运行时或插件市场。stdio 程序本身可具有外部访问能力，工具批准不构成 OS 沙箱。

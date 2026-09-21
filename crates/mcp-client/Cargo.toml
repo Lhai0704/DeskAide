@@ -1,0 +1,32 @@
+[package]
+name = "deskaide-mcp-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["process", "io-util"] }
+tokio-util.workspace = true
+uuid.workspace = true
+sha2 = "0.10"
+futures-util = "0.3"
+rmcp = { version = "=3.4.0", default-features = false, features = ["client", "transport-async-rw"] }
+process-wrap = { version = "10.0", default-features = false, features = ["tokio1", "job-object", "creation-flags", "kill-on-drop"] }
+deskaide-assistant-core = { path = "../assistant-core" }
+deskaide-tool-core = { path = "../tool-core" }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = ["Win32_System_Threading"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+
+axum = "0.8"
+tempfile = "3"
+deskaide-assistant-runtime = { path = "../assistant-runtime" }
+deskaide-ai-provider = { path = "../ai-provider" }
+deskaide-context-core = { path = "../context-core" }

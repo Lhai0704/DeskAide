@@ -1,0 +1,17 @@
+[package]
+name = "deskaide-tool-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+jsonschema = { version = "0.45", default-features = false }
+deskaide-assistant-core = { path = "../assistant-core" }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
