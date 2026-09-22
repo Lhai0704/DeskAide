@@ -11,24 +11,19 @@
   } from '../avatar/catalog';
   import ModelSettings from '../settings/ModelSettings.svelte';
   import { loadTheme, saveTheme, type Theme } from '../settings/theme';
-  import {
-    buildModelMessages,
-    hasSavableConversation,
-    responseToConversationMessage,
-    type ConversationMessage,
-    type ConversationRecord,
-    type SaveConversationInput,
-  } from './conversation';
+  import { type ConversationMessage, type ConversationRecord } from './conversation';
   import {
     initialResponseState,
     reduceResponseEvent,
-    type ResponseEvent,
+    type AssistantEvent,
+    type TurnSnapshot,
+    restoreSnapshot,
+    isTerminal,
     type ResponseState,
   } from './events';
   import {
     CONTEXT_OPTIONS,
     contextDraftLabel,
-    contextResultNote,
     contextSourceLabel,
     contextUnavailableReason,
     contextExcerpt,
@@ -36,7 +31,6 @@
     type AssistantBootstrap,
     type AssistantShownPayload,
     type ContextCollectionResult,
-    type SubmitModelRequestResult,
     type TargetWindow,
     type TextContextDraft,
   } from './model';
@@ -46,6 +40,7 @@
     type SpeechSettings,
   } from '../speech/controller';
   import HistoryDrawer from './HistoryDrawer.svelte';
+  import ToolApprovalCard from './ToolApprovalCard.svelte';
 
   let speechSettings = defaultSpeechSettings();
   let speechStatus = '';
@@ -89,8 +84,12 @@
   let contextActionError = '';
   let textarea: HTMLTextAreaElement;
   let conversationElement: HTMLElement;
-  let historySaveQueue: Promise<void> = Promise.resolve();
-  const ignoredRequestIds = new SvelteSet<string>();
+  let revision = 0;
+  let contextEpoch = 0;
+  let submission: Promise<void> = Promise.resolve();
+  let transitioning = true;
+  let recovering = false;
+  let finalizing: Promise<void> = Promise.resolve();
   const selectedWindowIds = new SvelteSet<string>();
 
   onMount(() => {
@@ -105,32 +104,27 @@
       .catch((error) => {
         speechStatus = `语音设置读取失败：${String(error)}`;
       });
-    const unlistenResponse = listen<ResponseEvent>('model-response', ({ payload }) => {
-      if (ignoredRequestIds.has(payload.requestId)) {
-        if (
-          payload.type === 'completed' ||
-          payload.type === 'failed' ||
-          payload.type === 'cancelled'
-        ) {
-          ignoredRequestIds.delete(payload.requestId);
-        }
+    const unlistenResponse = listen<AssistantEvent>('assistant-event', ({ payload }) => {
+      const previous = responseState;
+      const next = reduceResponseEvent(previous, payload);
+      if (next === previous) return;
+      if (payload.sequence > previous.sequence + 1) {
+        speech.stop();
+        void recoverTurn();
         return;
       }
+      responseState = next;
       speech.event(payload);
-      const nextResponseState = reduceResponseEvent(responseState, payload);
-      responseState = nextResponseState;
-      if (
-        payload.type === 'completed' ||
-        payload.type === 'failed' ||
-        payload.type === 'cancelled'
-      ) {
+      if (payload.type === 'contextPrepared') contextResults = payload.results;
+      if (isTerminal(next.status)) {
         pending = false;
         stopping = false;
-        void finalizeResponse(nextResponseState);
-      } else {
-        void scrollConversationToBottom();
-      }
+        finalizing = finalizeResponse(next);
+      } else void scrollConversationToBottom();
     });
+    const recoveryTimer = window.setInterval(() => {
+      if (pending) void recoverTurn();
+    }, 1500);
     const unlistenShown = listen<AssistantShownPayload>('assistant-shown', ({ payload }) => {
       activeTarget = payload.target;
       contextWarning = payload.warning ?? '';
@@ -147,10 +141,16 @@
       },
     );
 
-    void loadBootstrap();
+    void loadBootstrap()
+      .then(() => unlistenResponse)
+      .then(restoreActiveTurn)
+      .finally(() => {
+        transitioning = false;
+      });
     textarea?.focus();
 
     return () => {
+      window.clearInterval(recoveryTimer);
       speech.dispose();
       void unlistenResponse.then((unlisten) => unlisten());
       void unlistenShown.then((unlisten) => unlisten());
@@ -172,111 +172,154 @@
     return bootstrap?.modelProfiles.find((profile) => profile.id === activeModelProfileId) ?? null;
   }
 
-  async function persistConversation() {
-    if (!hasSavableConversation(messages) || !activeModelProfileId) return;
-    const savedConversationId = conversationId;
-    const conversation: SaveConversationInput = {
-      id: savedConversationId,
-      title: null,
-      modelProfileId: activeModelProfileId,
-      messages,
-    };
-    const saveTask = historySaveQueue.then(async () => {
-      try {
-        await invoke<ConversationRecord>('save_conversation', { conversation });
-        if (conversationId === savedConversationId) historySaveError = '';
-      } catch (cause) {
-        if (conversationId === savedConversationId) {
-          historySaveError = cause instanceof Error ? cause.message : String(cause);
-        }
-      }
-    });
-    historySaveQueue = saveTask;
-    await saveTask;
+  async function restoreActiveTurn() {
+    // WebView resubscription only: app startup has no active runtime turn.
+    try {
+      const snapshot = await invoke<TurnSnapshot | null>('get_active_turn_snapshot');
+      if (!snapshot) return;
+      const record = await invoke<ConversationRecord | null>('load_conversation', {
+        conversationId: snapshot.conversationId,
+      });
+      conversationId = snapshot.conversationId;
+      messages =
+        record?.messages.filter(
+          (message) => message.role !== 'assistant' || message.turnId !== snapshot.turnId,
+        ) ?? [];
+      revision = record?.revision ?? snapshot.revision;
+      responseState = initialResponseState(conversationId, snapshot.turnId);
+      pending = true;
+      responseState = restoreSnapshot(responseState, snapshot);
+      if (isTerminal(responseState.status)) {
+        pending = false;
+        finalizing = finalizeResponse(responseState);
+      } else await recoverTurn();
+    } catch (cause) {
+      historySaveError = `无法恢复运行中的请求：${String(cause)}`;
+    }
   }
-
+  async function recoverTurn() {
+    const turnId = responseState.turnId;
+    if (!turnId || recovering) return;
+    recovering = true;
+    try {
+      const snapshot = await invoke<TurnSnapshot | null>('get_turn_snapshot', { turnId });
+      if (!snapshot) return;
+      const next = restoreSnapshot(responseState, snapshot);
+      if (next === responseState) return;
+      speech.stop(); // Recovered text is a snapshot, never replay it through TTS.
+      responseState = next;
+      if (isTerminal(next.status)) {
+        pending = false;
+        stopping = false;
+        finalizing = finalizeResponse(next);
+      }
+    } catch {
+      historySaveError = '暂时无法恢复生成状态';
+    } finally {
+      recovering = false;
+    }
+  }
   async function finalizeResponse(response: ResponseState) {
-    const message = responseToConversationMessage(response, createId());
-    if (message) messages = [...messages, message];
-    responseState = initialResponseState();
-    await persistConversation();
+    const id = conversationId;
+    revision = response.revision;
+    try {
+      const record = await invoke<ConversationRecord | null>('load_conversation', {
+        conversationId: id,
+      });
+      if (conversationId !== id || responseState.turnId !== response.turnId) return;
+      if (record) {
+        messages = record.messages;
+        revision = record.revision;
+      }
+      historySaveError = response.status === 'failed' ? response.error : '';
+      responseState = initialResponseState();
+    } catch (cause) {
+      historySaveError = `历史记录读取失败：${String(cause)}`;
+    }
     await scrollConversationToBottom();
   }
-
   async function submit() {
     const value = prompt.trim();
-    if (!value || pending || !activeModelProfileId) return;
-
-    speech.begin(speechSettings);
-    const userMessageId = createId();
-    messages = [...messages, { id: userMessageId, role: 'user', content: value }];
-    prompt = '';
-    pending = true;
-    contextResults = [];
-    responseState = initialResponseState();
-    await persistConversation();
+    if (!value || !activeModelProfileId || transitioning) return;
+    transitioning = true;
     try {
-      const result = await invoke<SubmitModelRequestResult>('submit_model_request', {
-        conversationId,
-        messages: buildModelMessages(messages),
-        contextSources: [],
-        contextDrafts,
+      await finalizing;
+      if (pending) await interruptActiveGeneration();
+      const turnId = createId();
+      responseState = initialResponseState(conversationId, turnId);
+      speech.begin(speechSettings, turnId);
+      messages = [...messages, { id: createId(), role: 'user', content: value }];
+      prompt = '';
+      pending = true;
+      contextResults = [];
+      historySaveError = '';
+      const drafts = contextDrafts;
+      submission = invoke<void>('submit_turn', {
+        input: {
+          conversationId,
+          turnId,
+          expectedRevision: revision,
+          prompt: value,
+          contextDrafts: drafts,
+        },
       });
-      contextResults = result.contextResults;
-      contextDrafts = [];
-      selectedTextPreview = null;
-      clipboardPreview = null;
-      const note = contextResultNote(result.contextResults);
-      if (note) {
-        messages = messages.map((message) =>
-          message.id === userMessageId ? { ...message, note } : message,
-        );
-        await persistConversation();
+      try {
+        await submission;
+        contextEpoch++;
+        contextDrafts = [];
+        selectedTextPreview = null;
+        clipboardPreview = null;
+      } catch (cause) {
+        if (responseState.turnId !== turnId) return;
+        speech.stop();
+        pending = false;
+        responseState = { ...responseState, status: 'failed', error: String(cause) };
+        historySaveError = String(cause);
+        // A failed submission has no user turn in storage. Preserve the draft for retry.
+        prompt = value;
+        messages = messages.slice(0, -1);
       }
-      if (!responseState.requestId)
-        responseState = { ...responseState, requestId: result.requestId };
     } catch (cause) {
-      speech.stop();
-      pending = false;
-      const failedResponse: ResponseState = {
-        requestId: null,
-        content: '',
-        status: 'failed',
-        error: cause instanceof Error ? cause.message : String(cause),
-      };
-      responseState = failedResponse;
-      await finalizeResponse(failedResponse);
+      historySaveError = `无法开始新请求：${String(cause)}`;
+    } finally {
+      transitioning = false;
     }
   }
-
   async function stop() {
     speech.stop();
-    if (!responseState.requestId || !pending || stopping) return;
+    const turnId = responseState.turnId;
+    if (!turnId || stopping) return;
     stopping = true;
     try {
-      const stopped = await invoke<boolean>('stop_generation', {
-        requestId: responseState.requestId,
-      });
-      if (!stopped) stopping = false;
+      await submission.catch(() => {});
+      await invoke('cancel_turn', { turnId });
+      await recoverTurn();
     } catch (cause) {
+      historySaveError = `停止失败：${String(cause)}`;
+    } finally {
       stopping = false;
-      responseState = {
-        ...responseState,
-        status: 'failed',
-        error: cause instanceof Error ? cause.message : String(cause),
-      };
     }
   }
-
   async function newConversation() {
-    if (pending && !responseState.requestId) return;
-    await interruptActiveGeneration();
-    resetToBlankConversation();
+    if (transitioning) return;
+    transitioning = true;
+    try {
+      await interruptActiveGeneration();
+      await finalizing;
+      resetToBlankConversation();
+    } catch (cause) {
+      historySaveError = `无法新建会话：${String(cause)}`;
+    } finally {
+      transitioning = false;
+    }
   }
-
   function resetToBlankConversation() {
+    contextEpoch++;
     messages = [];
+    revision = 0;
     responseState = initialResponseState();
+    pending = false;
+    stopping = false;
     contextResults = [];
     selectedWindowIds.clear();
     contextDrafts = [];
@@ -288,26 +331,28 @@
     modelRestoreWarning = '';
     window.setTimeout(() => textarea?.focus(), 0);
   }
-
   async function interruptActiveGeneration() {
     speech.stop();
-    if (!pending || !responseState.requestId) return;
-    const requestId = responseState.requestId;
-    ignoredRequestIds.add(requestId);
-    const cancelledResponse: ResponseState = { ...responseState, status: 'cancelled', error: '' };
-    pending = false;
-    stopping = false;
-    const message = responseToConversationMessage(cancelledResponse, createId());
-    if (message) messages = [...messages, message];
-    responseState = initialResponseState();
-    await persistConversation();
-    try {
-      await invoke<boolean>('stop_generation', { requestId });
-    } catch (cause) {
-      modelRestoreWarning = `停止生成失败：${cause instanceof Error ? cause.message : String(cause)}`;
+    const turnId = responseState.turnId;
+    if (turnId && pending) {
+      await submission.catch(() => {});
+      await invoke('cancel_turn', { turnId });
+      await recoverTurn();
+    }
+    await finalizing;
+    if (turnId && responseState.turnId === turnId) {
+      const record = await invoke<ConversationRecord | null>('load_conversation', {
+        conversationId,
+      });
+      if (record) {
+        messages = record.messages;
+        revision = record.revision;
+      }
+      responseState = initialResponseState();
+      pending = false;
+      stopping = false;
     }
   }
-
   async function openHistory() {
     if (!expanded) {
       await invoke('set_assistant_expanded', { expanded: true });
@@ -325,24 +370,28 @@
       window.setTimeout(() => textarea?.focus(), 0);
       return;
     }
-    if (pending && !responseState.requestId) {
-      throw new Error('模型请求正在准备，请稍后再切换对话');
-    }
-    const record = await invoke<ConversationRecord | null>('load_conversation', {
-      conversationId: selectedConversationId,
-    });
-    if (!record) throw new Error('这条历史对话已不存在');
+    if (transitioning) return;
+    transitioning = true;
+    try {
+      const record = await invoke<ConversationRecord | null>('load_conversation', {
+        conversationId: selectedConversationId,
+      });
+      if (!record) throw new Error('这条历史对话已不存在');
 
-    await interruptActiveGeneration();
-    messages = record.messages;
-    conversationId = record.id;
-    resetTransientConversationState();
-    historySaveError = '';
-    modelRestoreWarning = '';
-    await restoreConversationModel(record.modelProfileId);
-    historyOpen = false;
-    await scrollConversationToBottom();
-    window.setTimeout(() => textarea?.focus(), 0);
+      await interruptActiveGeneration();
+      messages = record.messages;
+      revision = record.revision;
+      conversationId = record.id;
+      resetTransientConversationState();
+      historySaveError = '';
+      modelRestoreWarning = '';
+      await restoreConversationModel(record.modelProfileId);
+      historyOpen = false;
+      await scrollConversationToBottom();
+      window.setTimeout(() => textarea?.focus(), 0);
+    } finally {
+      transitioning = false;
+    }
   }
 
   async function restoreConversationModel(modelProfileId: string) {
@@ -364,18 +413,20 @@
   }
 
   async function deleteHistoryConversation(deletedConversationId: string) {
-    if (deletedConversationId === conversationId) {
-      if (pending && !responseState.requestId) {
-        throw new Error('模型请求正在准备，请稍后再删除当前对话');
-      }
-      await interruptActiveGeneration();
+    if (transitioning) return;
+    transitioning = true;
+    try {
+      if (deletedConversationId === conversationId) await interruptActiveGeneration();
+      await finalizing;
+      await invoke<boolean>('delete_conversation', { conversationId: deletedConversationId });
+      if (deletedConversationId === conversationId) resetToBlankConversation();
+    } finally {
+      transitioning = false;
     }
-    await historySaveQueue;
-    await invoke<boolean>('delete_conversation', { conversationId: deletedConversationId });
-    if (deletedConversationId === conversationId) resetToBlankConversation();
   }
 
   function resetTransientConversationState() {
+    contextEpoch++;
     responseState = initialResponseState();
     pending = false;
     stopping = false;
@@ -492,15 +543,18 @@
 
   async function readTextSource(source: 'selectedText' | 'clipboard') {
     if (readingTextSource || textSourceUnavailable(source)) return null;
+    const epoch = contextEpoch;
     readingTextSource = source;
     contextActionError = '';
     try {
       const command =
         source === 'selectedText' ? 'preview_selected_text_context' : 'preview_clipboard_context';
       const draft = await invoke<TextContextDraft>(command);
+      if (epoch !== contextEpoch) return null;
       setPreviewForSource(source, draft);
       return draft;
     } catch (cause) {
+      if (epoch !== contextEpoch) return null;
       contextActionError = cause instanceof Error ? cause.message : String(cause);
       setPreviewForSource(source, null);
       return null;
@@ -511,8 +565,9 @@
 
   async function addTextSource(source: 'selectedText' | 'clipboard') {
     if (hasTextContextSource(source) || pending) return;
+    const epoch = contextEpoch;
     const draft = previewForSource(source) ?? (await readTextSource(source));
-    if (!draft) return;
+    if (!draft || epoch !== contextEpoch) return;
     contextDrafts = [...contextDrafts, draft];
     setPreviewForSource(source, null);
   }
@@ -551,6 +606,7 @@
       (target) => selectedWindowIds.has(target.id) && !hasWindowContext(target.id),
     );
     if (targets.length === 0 || collectingWindows) return;
+    const epoch = contextEpoch;
     collectingWindows = true;
     contextActionError = '';
     const added: TextContextDraft[] = [];
@@ -561,6 +617,10 @@
       } catch {
         failureCount += 1;
       }
+    }
+    if (epoch !== contextEpoch) {
+      collectingWindows = false;
+      return;
     }
     contextDrafts = [...contextDrafts, ...added];
     if (failureCount > 0) {
@@ -606,7 +666,7 @@
         class="icon-button"
         type="button"
         title="新建会话"
-        disabled={pending && !responseState.requestId}
+        disabled={transitioning}
         onclick={newConversation}>＋</button
       >
       <button class="icon-button" type="button" title="设置" onclick={openSettings}>⚙</button>
@@ -784,7 +844,7 @@
       <p class="system-status">{modelRestoreWarning}</p>
     {/if}
     {#if historySaveError}
-      <p class="system-error">历史对话保存失败：{historySaveError}</p>
+      <p class="system-error">对话状态：{historySaveError}</p>
     {/if}
     {#if contextResults.length > 0}
       <div class="context-results">
@@ -803,8 +863,8 @@
         <span>✦</span>
         <p>
           {activeProfile()?.providerType === 'mock'
-            ? '当前使用本地 Mock Provider；仅在你选择上下文并发送时读取对应文字。'
-            : `当前使用 ${activeProfile()?.name ?? '所选模型'}；仅在你选择上下文并发送时读取对应文字。`}
+            ? '当前使用本地 Mock Provider；仅在你主动预览或添加上下文时读取对应文字。'
+            : `当前使用 ${activeProfile()?.name ?? '所选模型'}；仅在你主动预览或添加上下文时读取对应文字。`}
         </p>
       </div>
     {/if}
@@ -817,6 +877,18 @@
       </article>
     {/each}
 
+    {#if responseState.activity}<p class="system-status" role="status">
+        {responseState.activity}
+      </p>{/if}
+    {#if responseState.approval && responseState.turnId}
+      {#key responseState.approval.approvalId}
+        <ToolApprovalCard
+          approval={responseState.approval}
+          {conversationId}
+          turnId={responseState.turnId}
+        />
+      {/key}
+    {/if}
     {#if responseState.content}
       <article class="message assistant-message current-response">
         <span>DeskAide</span>
@@ -864,7 +936,7 @@
       bind:value={prompt}
       rows="3"
       placeholder="现在需要我帮你做什么？"
-      disabled={pending}></textarea>
+      disabled={transitioning}></textarea>
     <div class="composer-footer">
       <span>{speechStatus || 'Ctrl + Enter 发送 · Esc 隐藏'}</span>
       {#if speechActive}<button class="stop" type="button" onclick={() => speech.stop()}
@@ -874,14 +946,14 @@
         <button class="stop" type="button" onclick={stop} disabled={stopping}>
           {stopping ? '正在停止' : '停止生成'}
         </button>
-      {:else}
-        <button
-          class="send"
-          type="button"
-          onclick={submit}
-          disabled={!prompt.trim() || !activeModelProfileId}>发送</button
-        >
       {/if}
+      <button
+        class="send"
+        type="button"
+        onclick={submit}
+        disabled={!prompt.trim() || !activeModelProfileId || transitioning}
+        >{pending ? '发送并替换' : '发送'}</button
+      >
     </div>
   </section>
 
@@ -909,6 +981,9 @@
       activeConversationId={conversationId}
       onselect={selectHistoryConversation}
       ondelete={deleteHistoryConversation}
+      onrename={(summary) => {
+        if (summary.id === conversationId) revision = summary.revision;
+      }}
       onclose={() => (historyOpen = false)}
     />
   {/if}

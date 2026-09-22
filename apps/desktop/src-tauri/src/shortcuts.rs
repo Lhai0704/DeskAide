@@ -167,10 +167,10 @@ mod copilot {
                     && (DOWN.load(Ordering::SeqCst)
                         || (COPILOT_ENABLED.load(Ordering::SeqCst) && modifiers))
                 {
-                    if !DOWN.swap(true, Ordering::SeqCst) {
-                        if let Some(sender) = SIGNAL.get() {
-                            let _ = sender.send(());
-                        }
+                    if !DOWN.swap(true, Ordering::SeqCst)
+                        && let Some(sender) = SIGNAL.get()
+                    {
+                        let _ = sender.send(());
                     }
                     return LRESULT(1);
                 }

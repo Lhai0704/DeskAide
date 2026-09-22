@@ -1,4 +1,27 @@
+import { MouthEnvelope } from './envelope';
 export class SpeechPlayer {
+  private analyser: AnalyserNode | null = null;
+  private envelope = new MouthEnvelope();
+  private sources = new Map<AudioBufferSourceNode, { start: number; end: number }>();
+  private samples = new Float32Array(1024);
+  presentation() {
+    const time = this.context?.currentTime ?? 0;
+    const playing =
+      this.context?.state === 'running' &&
+      [...this.sources.values()].some((s) => time >= s.start && time < s.end);
+    if (!playing) {
+      this.envelope.reset();
+      return { playing: false, level: 0 };
+    }
+    if (this.analyser) {
+      this.analyser.getFloatTimeDomainData(this.samples);
+      return { playing: true, level: this.envelope.update(this.samples, 1 / 30) };
+    }
+    return {
+      playing: true,
+      level: (0.15 + Math.abs(Math.sin(time * 13)) * 0.3) * (this.gain?.gain.value ?? 0),
+    };
+  }
   private context: AudioContext | null = null;
   private gain: GainNode | null = null;
   private end = 0;
@@ -11,7 +34,15 @@ export class SpeechPlayer {
     this.context = context;
     this.gain = context.createGain();
     this.gain.gain.value = volume;
-    this.gain.connect(context.destination);
+    try {
+      this.analyser = context.createAnalyser();
+      this.analyser.fftSize = 2048;
+      this.gain.connect(this.analyser);
+      this.analyser.connect(context.destination);
+    } catch {
+      this.analyser = null;
+      this.gain.connect(context.destination);
+    }
     await context.resume();
     if (context.state !== 'running') throw new Error('音频播放未获允许，请点击试听后重试');
   }
@@ -42,10 +73,27 @@ export class SpeechPlayer {
     source.connect(this.gain);
     const at = Math.max(this.end, this.context.currentTime + (this.buffered ? 0 : 0.15));
     source.start(at);
-    source.onended = () => source.disconnect();
+    this.sources.set(source, { start: at, end: at + buffer.duration });
+    source.onended = () => {
+      this.sources.delete(source);
+      source.disconnect();
+    };
     this.end = at + buffer.duration;
   }
   stop() {
+    for (const source of this.sources.keys()) {
+      source.onended = null;
+      try {
+        source.stop();
+        source.disconnect();
+      } catch {
+        /* Already ended. */
+      }
+    }
+    this.sources.clear();
+    this.analyser?.disconnect();
+    this.analyser = null;
+    this.envelope.reset();
     if (this.context) void this.context.close().catch(() => {});
     this.context = null;
     this.gain = null;

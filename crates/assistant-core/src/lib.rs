@@ -1,4 +1,6 @@
 //! Shared domain types for DeskAide.
+mod agent;
+pub use agent::*;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -57,6 +59,7 @@ pub enum MessageRole {
     System,
     User,
     Assistant,
+    Tool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -78,13 +81,17 @@ pub enum ContentBlock {
 pub struct ModelMessage {
     pub role: MessageRole,
     pub content: Vec<ContentBlock>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<ToolCall>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerationOptions {
     pub max_output_tokens: Option<u32>,
-    pub temperature: Option<f32>,
+    pub temperature: Option<f64>,
 }
 
 impl Default for GenerationOptions {
@@ -105,7 +112,7 @@ pub struct ModelRequest {
     pub system_prompt: Option<String>,
     pub messages: Vec<ModelMessage>,
     #[serde(default)]
-    pub context: Vec<ContextPayload>,
+    pub tools: Vec<ToolDefinition>,
     #[serde(default)]
     pub generation_options: GenerationOptions,
 }
@@ -113,6 +120,8 @@ pub struct ModelRequest {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelCapabilities {
+    #[serde(default)]
+    pub supports_tools: bool,
     pub supports_text: bool,
     pub supports_images: bool,
     pub supports_streaming: bool,
@@ -126,93 +135,8 @@ pub struct ModelCapabilities {
 pub struct ModelResponse {
     pub content: String,
     pub finish_reason: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(
-    tag = "type",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase"
-)]
-pub enum ResponseEvent {
-    Started {
-        request_id: String,
-    },
-    Delta {
-        request_id: String,
-        text: String,
-    },
-    Completed {
-        request_id: String,
-        response: ModelResponse,
-    },
-    Failed {
-        request_id: String,
-        code: String,
-        message: String,
-    },
-    Cancelled {
-        request_id: String,
-    },
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn response_events_use_the_frontend_wire_format() {
-        let event = ResponseEvent::Completed {
-            request_id: "request-1".to_owned(),
-            response: ModelResponse {
-                content: "done".to_owned(),
-                finish_reason: "stop".to_owned(),
-            },
-        };
-        let value = serde_json::to_value(event).unwrap();
-
-        assert_eq!(value["type"], "completed");
-        assert_eq!(value["requestId"], "request-1");
-        assert_eq!(value["response"]["finishReason"], "stop");
-        assert!(value.get("request_id").is_none());
-    }
-
-    #[test]
-    fn cancelled_events_use_the_frontend_wire_format() {
-        let value = serde_json::to_value(ResponseEvent::Cancelled {
-            request_id: "request-2".to_owned(),
-        })
-        .unwrap();
-
-        assert_eq!(value["type"], "cancelled");
-        assert_eq!(value["requestId"], "request-2");
-    }
-
-    #[test]
-    fn failed_events_include_a_machine_readable_error_code() {
-        let value = serde_json::to_value(ResponseEvent::Failed {
-            request_id: "request-3".to_owned(),
-            code: "rate_limited".to_owned(),
-            message: "try later".to_owned(),
-        })
-        .unwrap();
-        assert_eq!(value["code"], "rate_limited");
-        assert_eq!(value["message"], "try later");
-    }
-
-    #[test]
-    fn context_sources_use_frontend_wire_names() {
-        assert_eq!(
-            serde_json::to_string(&ContextSourceType::SelectedText).unwrap(),
-            "\"selectedText\""
-        );
-        assert_eq!(
-            serde_json::to_string(&ContextSourceType::ActiveWindowText).unwrap(),
-            "\"activeWindowText\""
-        );
-        assert_eq!(
-            serde_json::to_string(&ContextSourceType::Clipboard).unwrap(),
-            "\"clipboard\""
-        );
-    }
+    #[serde(default)]
+    pub tool_calls: Vec<ToolCall>,
+    #[serde(default)]
+    pub usage: Option<TokenUsage>,
 }

@@ -1,4 +1,8 @@
-//! Platform-neutral context acquisition contracts.
+mod collection;
+mod registry;
+pub use collection::*;
+pub use registry::*;
+// Platform-neutral context acquisition contracts.
 
 use std::sync::Arc;
 

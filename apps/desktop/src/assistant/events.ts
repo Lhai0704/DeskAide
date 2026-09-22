@@ -1,28 +1,92 @@
-export type ResponseEvent =
-  | { type: 'started'; requestId: string }
-  | { type: 'delta'; requestId: string; text: string }
-  | {
-      type: 'completed';
-      requestId: string;
-      response: { content: string; finishReason: string };
-    }
-  | { type: 'failed'; requestId: string; code: string; message: string }
-  | { type: 'cancelled'; requestId: string };
-
-export interface ResponseState {
-  requestId: string | null;
-  content: string;
-  status: 'idle' | 'streaming' | 'completed' | 'failed' | 'cancelled';
-  error: string;
+import type { ContextCollectionResult } from './model';
+export interface ToolCall {
+  id: string;
+  name: string;
+  arguments: string;
 }
-
-export const initialResponseState = (): ResponseState => ({
-  requestId: null,
+export interface ToolDefinition {
+  displayName?: string;
+  id: string;
+  name: string;
+  description: string;
+  parameters: unknown;
+  source: { type: 'internal' } | { type: 'mcp'; serverId: string; serverName: string };
+  risk: string;
+  revision: number;
+}
+export interface ToolApproval {
+  approvalId: string;
+  call: ToolCall;
+  definition: ToolDefinition;
+  sensitiveContext: boolean;
+}
+export type AssistantEvent = {
+  version: 1;
+  conversationId: string;
+  turnId: string;
+  sequence: number;
+} & (
+  | { type: 'turnStarted' }
+  | { type: 'contextPrepared'; results: ContextCollectionResult[] }
+  | { type: 'messageStarted'; messageId: string; modelStep: number }
+  | { type: 'textDelta' | 'reasoningDelta'; messageId: string; text: string }
+  | { type: 'messageCompleted'; messageId: string; content: string }
+  | { type: 'toolProposed'; call: ToolCall }
+  | { type: 'toolApprovalRequired'; approval: ToolApproval }
+  | { type: 'toolStarted' | 'toolCompleted'; toolCallId: string }
+  | { type: 'toolFailed'; toolCallId: string; code: string }
+  | {
+      type: 'usage';
+      modelStep: number;
+      usage: {
+        inputTokens: number | null;
+        outputTokens: number | null;
+        totalTokens: number | null;
+      };
+    }
+  | { type: 'turnCompleted' | 'turnCancelled'; revision: number }
+  | { type: 'turnFailed'; revision: number; code: string; message: string }
+  | { type: 'warning'; code: string; message: string }
+);
+export interface ResponseState {
+  turnId: string | null;
+  conversationId: string | null;
+  sequence: number;
+  content: string;
+  status: 'idle' | 'streaming' | 'approval' | 'tool' | 'completed' | 'failed' | 'cancelled';
+  error: string;
+  approval: ToolApproval | null;
+  activity: string;
+  revision: number;
+}
+export interface TurnSnapshot {
+  phase?: 'preparing' | 'generating' | 'responding' | 'tool' | 'approval' | 'terminal';
+  conversationId: string;
+  turnId: string;
+  sequence: number;
+  content: string;
+  status: 'running' | 'completed' | 'failed' | 'cancelled';
+  approval: ToolApproval | null;
+  revision: number;
+  error: { code: string; message: string } | null;
+}
+export const initialResponseState = (
+  conversationId: string | null = null,
+  turnId: string | null = null,
+): ResponseState => ({
+  conversationId,
+  turnId,
+  sequence: 0,
   content: '',
-  status: 'idle',
+  status: turnId ? 'streaming' : 'idle',
   error: '',
+  approval: null,
+  activity: '',
+  revision: 0,
 });
-
+export function isTerminal(status: ResponseState['status']): boolean {
+  return ['completed', 'failed', 'cancelled'].includes(status);
+}
 export function providerErrorLabel(code: string, fallback: string): string {
   const labels: Record<string, string> = {
     api_key_missing: 'API Key 未配置',
@@ -40,39 +104,90 @@ export function providerErrorLabel(code: string, fallback: string): string {
   return labels[code] ? `${labels[code]}：${fallback}` : fallback;
 }
 
-export function reduceResponseEvent(state: ResponseState, event: ResponseEvent): ResponseState {
-  if (state.requestId && event.requestId !== state.requestId) return state;
-
+export function reduceResponseEvent(state: ResponseState, event: AssistantEvent): ResponseState {
+  if (
+    event.version !== 1 ||
+    !state.turnId ||
+    state.turnId !== event.turnId ||
+    state.conversationId !== event.conversationId ||
+    event.sequence <= state.sequence ||
+    isTerminal(state.status)
+  )
+    return state;
+  const next = { ...state, sequence: event.sequence };
   switch (event.type) {
-    case 'started':
-      return { requestId: event.requestId, content: '', status: 'streaming', error: '' };
-    case 'delta':
+    case 'turnStarted':
+      return { ...next, status: 'streaming', activity: '正在准备' };
+    case 'textDelta':
+      return { ...next, content: next.content + event.text, status: 'streaming', activity: '' };
+    case 'messageStarted':
+      return { ...next, status: 'streaming', activity: '正在生成' };
+    case 'toolProposed':
+      return { ...next, activity: `工具：${event.call.name}` };
+    case 'toolApprovalRequired':
+      return { ...next, status: 'approval', approval: event.approval, activity: '等待你的批准' };
+    case 'toolStarted':
+      return { ...next, status: 'tool', approval: null, activity: '正在执行工具' };
+    case 'toolCompleted':
+      return { ...next, status: 'streaming', approval: null, activity: '工具执行完成，正在继续' };
+    case 'toolFailed':
       return {
-        ...state,
-        requestId: event.requestId,
-        content: state.content + event.text,
+        ...next,
         status: 'streaming',
+        approval: null,
+        activity: `工具未完成：${event.code}`,
       };
-    case 'completed':
+    case 'turnCompleted':
       return {
-        requestId: event.requestId,
-        content: event.response.content,
+        ...next,
         status: 'completed',
-        error: '',
+        approval: null,
+        revision: event.revision,
+        activity: '',
       };
-    case 'failed':
+    case 'turnCancelled':
       return {
-        ...state,
-        requestId: event.requestId,
-        status: 'failed',
-        error: providerErrorLabel(event.code, event.message),
-      };
-    case 'cancelled':
-      return {
-        ...state,
-        requestId: event.requestId,
+        ...next,
         status: 'cancelled',
-        error: '',
+        approval: null,
+        revision: event.revision,
+        activity: '',
       };
+    case 'turnFailed':
+      return {
+        ...next,
+        status: 'failed',
+        approval: null,
+        revision: event.revision,
+        error: providerErrorLabel(event.code, event.message),
+        activity: '',
+      };
+    case 'warning':
+      return { ...next, activity: event.message };
+    default:
+      return next;
   }
+}
+export function restoreSnapshot(state: ResponseState, snapshot: TurnSnapshot): ResponseState {
+  if (
+    state.turnId !== snapshot.turnId ||
+    state.conversationId !== snapshot.conversationId ||
+    snapshot.sequence <= state.sequence ||
+    isTerminal(state.status)
+  )
+    return state;
+  return {
+    ...state,
+    sequence: snapshot.sequence,
+    content: snapshot.content,
+    approval: snapshot.approval,
+    revision: snapshot.revision,
+    status:
+      snapshot.status === 'running'
+        ? snapshot.approval
+          ? 'approval'
+          : 'streaming'
+        : snapshot.status,
+    error: snapshot.error?.message ?? '',
+  };
 }

@@ -8,9 +8,10 @@
     onselect: (conversationId: string) => Promise<void>;
     ondelete: (conversationId: string) => Promise<void>;
     onclose: () => void;
+    onrename: (summary: ConversationSummary) => void;
   }
 
-  let { activeConversationId, onselect, ondelete, onclose }: Props = $props();
+  let { activeConversationId, onselect, ondelete, onclose, onrename }: Props = $props();
   let summaries = $state<ConversationSummary[]>([]);
   let loading = $state(true);
   let error = $state('');
@@ -69,6 +70,7 @@
         conversationId,
         title,
       });
+      onrename(updated);
       summaries = summaries
         .map((summary) => (summary.id === conversationId ? updated : summary))
         .sort((left, right) => right.updatedAtMs - left.updatedAtMs);

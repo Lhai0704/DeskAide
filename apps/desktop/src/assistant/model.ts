@@ -1,4 +1,5 @@
 export interface ModelCapabilities {
+  supportsTools: boolean;
   supportsText: boolean;
   supportsImages: boolean;
   supportsStreaming: boolean;
@@ -10,6 +11,7 @@ export interface ModelCapabilities {
 export type ProviderType = 'mock' | 'openai_compatible';
 
 export interface ModelProfile {
+  preferFastResponse?: boolean;
   id: string;
   name: string;
   providerType: ProviderType;
@@ -70,11 +72,6 @@ export interface ContextCollectionResult {
   characterCount: number;
   truncated: boolean;
   message: string;
-}
-
-export interface SubmitModelRequestResult {
-  requestId: string;
-  contextResults: ContextCollectionResult[];
 }
 
 export function windowLabel(target: TargetWindow): string {

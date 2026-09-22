@@ -1,5 +1,5 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
-import type { ResponseEvent } from '../assistant/events';
+import type { AssistantEvent } from '../assistant/events';
 import { SpeechPlayer } from './player';
 import { SpeechText } from './text';
 
@@ -38,7 +38,22 @@ export class SpeechController {
   private player = new SpeechPlayer();
   private session: Session | null = null;
   private timer: ReturnType<typeof setInterval>;
+  private presentationTimer: ReturnType<typeof setInterval>;
+  private epoch: Promise<number>;
+  private sequence = 0;
+  private publish() {
+    const s = this.session;
+    const signal = s ? { sessionId: s.id, turnId: s.request, ...this.player.presentation() } : null;
+    const sequence = ++this.sequence;
+    void this.epoch
+      .then((epoch) => invoke('publish_speech_presentation', { epoch, sequence, signal }))
+      .catch(() => {});
+  }
   constructor(private report: (label: string, active: boolean) => void) {
+    this.epoch = invoke<number>('begin_speech_presentation').catch(() => 0);
+    this.presentationTimer = setInterval(() => {
+      if (this.session) this.publish();
+    }, 34);
     this.timer = setInterval(() => {
       const s = this.session;
       if (!s) return;
@@ -48,7 +63,7 @@ export class SpeechController {
       } else if (!s.running && !s.queue.length) this.report('等待回复文字', true);
     }, 150);
   }
-  begin(settings: SpeechSettings) {
+  begin(settings: SpeechSettings, turnId: string) {
     this.stop();
     if (!settings.enabled) return;
     if (!settings.reference) {
@@ -57,7 +72,7 @@ export class SpeechController {
     }
     const s: Session = {
       id: crypto.randomUUID(),
-      request: '',
+      request: turnId,
       settings: { ...settings },
       text: new SpeechText(),
       queue: [],
@@ -71,30 +86,42 @@ export class SpeechController {
       if (this.session === s) this.fail(e);
     });
   }
-  event(event: ResponseEvent) {
+  event(event: AssistantEvent) {
     const s = this.session;
-    if (!s || (s.request && s.request !== event.requestId)) return;
-    s.request = event.requestId;
-    if (event.type === 'delta') s.queue.push(...s.text.append(event.text));
-    if (event.type === 'completed') {
-      s.queue.push(...s.text.finish(event.response.content));
-      s.finished = true;
-    }
-    if (event.type === 'cancelled' || event.type === 'failed') {
+    if (!s || s.request !== event.turnId) return;
+    if (event.type === 'messageStarted') s.text = new SpeechText();
+    if (event.type === 'textDelta') s.queue.push(...s.text.append(event.text));
+    if (event.type === 'messageCompleted') s.queue.push(...s.text.finish(event.content));
+    if (event.type === 'turnCompleted') s.finished = true;
+    if (event.type === 'turnCancelled' || event.type === 'turnFailed') {
       this.stop();
+      return;
+    }
+    if (s.queue.length > 128 || s.queue.reduce((n, text) => n + text.length, 0) > 64000) {
+      this.fail('待朗读内容超过限制，本轮文字继续生成');
       return;
     }
     void this.pump(s);
   }
   preview(settings: SpeechSettings) {
-    this.begin({ ...settings, enabled: true });
+    const turnId = crypto.randomUUID();
+    this.begin({ ...settings, enabled: true }, turnId);
     this.event({
-      type: 'completed',
-      requestId: crypto.randomUUID(),
-      response: {
-        content: '你好，我是你的桌面助手。现在可以一边聊天，一边听我说话。',
-        finishReason: 'stop',
-      },
+      version: 1,
+      conversationId: 'preview',
+      turnId,
+      sequence: 1,
+      type: 'messageCompleted',
+      messageId: 'preview',
+      content: '你好，我是你的桌面助手。现在可以一边聊天，一边听我说话。',
+    });
+    this.event({
+      version: 1,
+      conversationId: 'preview',
+      turnId,
+      sequence: 2,
+      type: 'turnCompleted',
+      revision: 0,
     });
   }
   volume(volume: number) {
@@ -104,12 +131,17 @@ export class SpeechController {
     const s = this.session;
     this.session = null;
     this.player.stop();
+    this.publish();
     this.report('', false);
-    if (s) void invoke('cancel_speech', { sessionId: s.id }).catch(() => {});
+    if (s)
+      void invoke('cancel_speech', { sessionId: s.id }).catch(() =>
+        this.report('语音取消通知未送达，声音已停止', false),
+      );
   }
   dispose() {
     this.stop();
     clearInterval(this.timer);
+    clearInterval(this.presentationTimer);
   }
   private fail(error: unknown) {
     this.stop();

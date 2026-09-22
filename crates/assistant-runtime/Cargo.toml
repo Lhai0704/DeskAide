@@ -1,0 +1,21 @@
+[package]
+name = "deskaide-assistant-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+uuid.workspace = true
+deskaide-assistant-core = { path = "../assistant-core" }
+deskaide-ai-provider = { path = "../ai-provider" }
+deskaide-context-core = { path = "../context-core" }
+deskaide-tool-core = { path = "../tool-core" }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

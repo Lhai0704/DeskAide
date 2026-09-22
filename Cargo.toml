@@ -5,6 +5,9 @@ members = [
   "crates/ai-provider",
   "crates/context-core",
   "crates/platform-windows",
+  "crates/assistant-runtime",
+  "crates/tool-core",
+  "crates/mcp-client",
 ]
 resolver = "2"
 
@@ -12,7 +15,7 @@ resolver = "2"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-rust-version = "1.85"
+rust-version = "1.88"
 
 [workspace.dependencies]
 async-trait = "0.1.89"
@@ -20,5 +23,6 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 thiserror = "2.0.18"
 tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread", "sync", "time"] }
+tokio-util = { version = "0.7", features = ["rt", "codec"] }
 url = "2.5.8"
 uuid = { version = "1.21.0", features = ["serde", "v4"] }

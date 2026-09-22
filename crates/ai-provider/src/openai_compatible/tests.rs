@@ -99,11 +99,13 @@ async fn connection_test_uses_the_model_detail_endpoint() {
 
 fn config(base_url: String, streaming: bool) -> OpenAiCompatibleConfig {
     OpenAiCompatibleConfig {
+        prefer_fast_response: true,
         profile_id: "profile-1".to_owned(),
         base_url,
         model_id: "test-model".to_owned(),
         api_key: SecretString::new("super-secret-key"),
         capabilities: ModelCapabilities {
+            supports_tools: false,
             supports_text: true,
             supports_images: false,
             supports_streaming: streaming,
@@ -117,6 +119,36 @@ fn config(base_url: String, streaming: bool) -> OpenAiCompatibleConfig {
     }
 }
 
+#[test]
+fn gemini_fast_response_is_scoped_and_can_be_disabled() {
+    let mut c = config(
+        "https://generativelanguage.googleapis.com/v1beta/openai".into(),
+        true,
+    );
+    c.model_id = "gemini-3.5-flash".into();
+    let mut input = request();
+    input.generation_options.temperature = Some(0.7);
+    let body =
+        super::request::ChatCompletionRequest::from_model_request(&c, input.clone()).unwrap();
+    assert_eq!(body["reasoning_effort"], "minimal");
+    assert_eq!(body["stream"], true);
+    assert!(body.get("temperature").is_none());
+    c.prefer_fast_response = false;
+    let body =
+        super::request::ChatCompletionRequest::from_model_request(&c, input.clone()).unwrap();
+    assert!(body.get("reasoning_effort").is_none());
+    c.prefer_fast_response = true;
+    c.base_url = "https://example.com/v1".into();
+    let body =
+        super::request::ChatCompletionRequest::from_model_request(&c, input.clone()).unwrap();
+    assert!(body.get("reasoning_effort").is_none());
+    assert_eq!(body["temperature"], 0.7);
+    c.base_url = "https://generativelanguage.googleapis.com/v1beta/openai".into();
+    c.model_id = "gemini-3.1-pro".into();
+    let body = super::request::ChatCompletionRequest::from_model_request(&c, input).unwrap();
+    assert!(body.get("reasoning_effort").is_none());
+}
+
 fn request() -> ModelRequest {
     ModelRequest {
         request_id: "request-1".to_owned(),
@@ -128,7 +160,7 @@ fn request() -> ModelRequest {
             message(MessageRole::Assistant, "answer"),
             message(MessageRole::User, "follow-up"),
         ],
-        context: Vec::new(),
+        tools: Vec::new(),
         generation_options: GenerationOptions {
             max_output_tokens: None,
             temperature: Some(0.4),
@@ -138,6 +170,8 @@ fn request() -> ModelRequest {
 
 fn message(role: MessageRole, text: &str) -> ModelMessage {
     ModelMessage {
+        tool_calls: vec![],
+        tool_call_id: None,
         role,
         content: vec![ContentBlock::Text {
             text: text.to_owned(),
@@ -152,7 +186,7 @@ async fn sends_expected_url_headers_and_multiturn_body() {
     });
     let (base_url, captured) = server(TestResponse::Json(response)).await;
     let provider = OpenAiCompatibleProvider::new(config(base_url, false)).unwrap();
-    let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
+    let (sender, _receiver) = tokio::sync::mpsc::channel(256);
 
     provider.complete(request(), sender).await.unwrap();
 
@@ -192,13 +226,13 @@ async fn parses_sse_split_across_transport_chunks_and_done() {
     ];
     let (base_url, _) = server(TestResponse::Sse(chunks)).await;
     let provider = OpenAiCompatibleProvider::new(config(base_url, true)).unwrap();
-    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    let (sender, mut receiver) = tokio::sync::mpsc::channel(256);
 
     let response = provider.complete(request(), sender).await.unwrap();
     assert_eq!(response.content, "Hello world");
     let mut delta = String::new();
     while let Some(event) = receiver.recv().await {
-        if let ResponseEvent::Delta { text, .. } = event {
+        if let ProviderEvent::TextDelta(text) = event {
             delta.push_str(&text);
         }
     }
@@ -213,7 +247,7 @@ async fn rejects_an_incomplete_stream() {
     ];
     let (base_url, _) = server(TestResponse::Sse(chunks)).await;
     let provider = OpenAiCompatibleProvider::new(config(base_url, true)).unwrap();
-    let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
+    let (sender, _receiver) = tokio::sync::mpsc::channel(256);
     assert!(matches!(
         provider.complete(request(), sender).await,
         Err(ModelError::StreamInterrupted)
@@ -231,7 +265,7 @@ async fn maps_provider_status_codes_and_does_not_leak_the_key() {
             json!({"error":{"message":"rejected super-secret-key","type":"provider","code":"bad"}});
         let (base_url, _) = server(TestResponse::Error(status, body)).await;
         let provider = OpenAiCompatibleProvider::new(config(base_url, false)).unwrap();
-        let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (sender, _receiver) = tokio::sync::mpsc::channel(256);
         let error = provider.complete(request(), sender).await.unwrap_err();
         assert_eq!(error.code(), expected_code);
         assert!(!error.to_string().contains("super-secret-key"));
@@ -244,7 +278,7 @@ async fn recognizes_model_not_found_from_a_400_provider_error() {
     let body = json!({"error":{"message":"model not found","code":"model_not_found"}});
     let (base_url, _) = server(TestResponse::Error(StatusCode::BAD_REQUEST, body)).await;
     let provider = OpenAiCompatibleProvider::new(config(base_url, false)).unwrap();
-    let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
+    let (sender, _receiver) = tokio::sync::mpsc::channel(256);
     assert_eq!(
         provider
             .complete(request(), sender)
@@ -259,7 +293,7 @@ async fn recognizes_model_not_found_from_a_400_provider_error() {
 async fn caller_can_cancel_an_in_flight_http_request() {
     let (base_url, _) = server(TestResponse::Delay(Duration::from_secs(5))).await;
     let provider = OpenAiCompatibleProvider::new(config(base_url, false)).unwrap();
-    let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
+    let (sender, _receiver) = tokio::sync::mpsc::channel(256);
     let task = tokio::spawn(async move { provider.complete(request(), sender).await });
     tokio::time::sleep(Duration::from_millis(25)).await;
     task.abort();
@@ -273,7 +307,7 @@ async fn parses_crlf_sse_boundaries() {
     ];
     let (base_url, _) = server(TestResponse::Sse(chunks)).await;
     let provider = OpenAiCompatibleProvider::new(config(base_url, true)).unwrap();
-    let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
+    let (sender, _receiver) = tokio::sync::mpsc::channel(256);
     assert_eq!(
         provider.complete(request(), sender).await.unwrap().content,
         "ok"
@@ -286,7 +320,7 @@ async fn applies_the_configured_timeout() {
     let mut provider_config = config(base_url, false);
     provider_config.timeout_seconds = 1;
     let provider = OpenAiCompatibleProvider::new(provider_config).unwrap();
-    let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
+    let (sender, _receiver) = tokio::sync::mpsc::channel(256);
     let error = provider.complete(request(), sender).await.unwrap_err();
     assert_eq!(error.code(), "timeout");
 }
@@ -341,4 +375,104 @@ fn rejects_base_urls_that_embed_credentials_or_query_parameters() {
     );
     let query_url = config("https://example.com/v1?api_key=secret".to_owned(), false);
     assert_eq!(query_url.validate().unwrap_err().code(), "invalid_base_url");
+}
+#[tokio::test]
+async fn nonstreaming_tools_mixed_content_and_tool_result_roundtrip() {
+    use deskaide_assistant_core::{ToolCall, ToolDefinition, ToolRisk, ToolSource};
+    let body = json!({"choices":[{"message":{"content":"checking","tool_calls":[{"id":"call-a","type":"function","function":{"name":"echo","arguments":"{\"text\":\"hi\"}"}},{"id":"call-b","type":"function","function":{"name":"echo","arguments":"{}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}});
+    let (base_url, captured) = server(TestResponse::Json(body)).await;
+    let mut config = config(base_url, false);
+    config.capabilities.supports_tools = true;
+    let provider = OpenAiCompatibleProvider::new(config).unwrap();
+    let mut request = request();
+    request.tools = vec![ToolDefinition {
+        display_name: None,
+        id: "echo".into(),
+        name: "echo".into(),
+        description: "echo".into(),
+        parameters: json!({"type":"object"}),
+        source: ToolSource::Internal,
+        risk: ToolRisk::ReadOnly,
+        revision: 1,
+    }];
+    let mut assistant = ModelMessage::text(MessageRole::Assistant, "");
+    assistant.tool_calls = vec![ToolCall {
+        id: "old".into(),
+        name: "echo".into(),
+        arguments: "{}".into(),
+    }];
+    request.messages.push(assistant);
+    let mut result = ModelMessage::text(MessageRole::Tool, "result");
+    result.tool_call_id = Some("old".into());
+    request.messages.push(result);
+    let (tx, _rx) = tokio::sync::mpsc::channel(256);
+    let result = provider.complete(request, tx).await.unwrap();
+    assert_eq!(result.tool_calls.len(), 2);
+    assert_eq!(result.usage.unwrap().total_tokens, Some(15));
+    let captured = captured.lock().await;
+    assert_eq!(captured.body["tool_choice"], "auto");
+    assert_eq!(captured.body["messages"][4]["content"], Value::Null);
+    assert_eq!(captured.body["messages"][5]["tool_call_id"], "old");
+}
+
+#[test]
+fn reconstructs_fragmented_interleaved_calls_and_usage_only_frames() {
+    let mut stream = response::StreamAccumulator::default();
+    stream.push(&json!({"choices":[{"index":0,"delta":{"content":"checking","tool_calls":[{"index":0,"id":"call-a","type":"function","function":{"name":"ec","arguments":"{\"te"}},{"index":1,"id":"call-b","type":"function","function":{"name":"echo","arguments":"{"}}]}}]}).to_string()).unwrap();
+    stream.push(&json!({"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":"}"}},{"index":0,"function":{"name":"ho","arguments":"xt\":\"hi\"}"}}]},"finish_reason":"tool_calls"}]}).to_string()).unwrap();
+    stream
+        .push(&json!({"choices":[],"usage":{"total_tokens":99}}).to_string())
+        .unwrap();
+    stream.push("[DONE]").unwrap();
+    let result = stream.finish().unwrap();
+    assert_eq!(result.content, "checking");
+    assert_eq!(result.tool_calls[0].name, "echo");
+    assert_eq!(result.tool_calls[0].arguments, "{\"text\":\"hi\"}");
+    assert_eq!(result.tool_calls[1].arguments, "{}");
+    assert_eq!(result.usage.unwrap().total_tokens, Some(99));
+}
+
+#[test]
+fn rejects_malformed_tool_responses_and_accepts_null_text_tool_only() {
+    let valid = json!({"choices":[{"message":{"content":null,"tool_calls":[{"id":"a","type":"function","function":{"name":"echo","arguments":"{}"}}]},"finish_reason":"tool_calls"}]});
+    assert_eq!(
+        response::parse_response(valid.clone())
+            .unwrap()
+            .tool_calls
+            .len(),
+        1
+    );
+    let mut duplicate = valid.clone();
+    duplicate["choices"][0]["message"]["tool_calls"] = json!([
+        valid["choices"][0]["message"]["tool_calls"][0],
+        valid["choices"][0]["message"]["tool_calls"][0]
+    ]);
+    assert!(response::parse_response(duplicate).is_err());
+    let mut stream = response::StreamAccumulator::default();
+    assert!(stream.push("not json").is_err());
+    assert!(
+        stream
+            .push(&json!({"choices":[{"delta":{"tool_calls":[{"index":999}]}}]}).to_string())
+            .is_err()
+    );
+    assert!(response::parse_response(json!({"choices":[{"message":{"content":null}}]})).is_err());
+}
+
+#[tokio::test]
+async fn tools_disabled_omits_definitions_and_projects_old_tool_messages() {
+    let (base_url, captured) = server(TestResponse::Json(
+        json!({"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}]}),
+    ))
+    .await;
+    let provider = OpenAiCompatibleProvider::new(config(base_url, false)).unwrap();
+    let mut request = request();
+    let mut result = ModelMessage::text(MessageRole::Tool, "previous result");
+    result.tool_call_id = Some("call".into());
+    request.messages.push(result);
+    let (tx, _rx) = tokio::sync::mpsc::channel(256);
+    provider.complete(request, tx).await.unwrap();
+    let captured = captured.lock().await;
+    assert!(captured.body.get("tools").is_none());
+    assert!(captured.body.get("tool_choice").is_none());
+    assert_eq!(captured.body["messages"][4]["role"], "assistant");
 }

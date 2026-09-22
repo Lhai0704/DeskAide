@@ -22,6 +22,12 @@ path = "src/main.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+async-trait.workspace = true
+tokio-util.workspace = true
+tempfile = "3"
+deskaide-assistant-runtime = { path = "../../../crates/assistant-runtime" }
+deskaide-tool-core = { path = "../../../crates/tool-core" }
+deskaide-mcp-client = { path = "../../../crates/mcp-client" }
 deskaide-ai-provider = { path = "../../../crates/ai-provider" }
 deskaide-assistant-core = { path = "../../../crates/assistant-core" }
 deskaide-context-core = { path = "../../../crates/context-core" }
@@ -33,6 +39,7 @@ tauri-plugin-store = "2"
 thiserror.workspace = true
 tokio.workspace = true
 url.workspace = true
+percent-encoding = "2.3.2"
 uuid.workspace = true
 reqwest = { version = "0.12.28", features = ["json", "stream"] }
 futures-util = "0.3.31"

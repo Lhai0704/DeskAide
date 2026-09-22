@@ -15,6 +15,7 @@ import {
 } from './model';
 
 const textOnly: ModelCapabilities = {
+  supportsTools: false,
   supportsText: true,
   supportsImages: false,
   supportsStreaming: true,

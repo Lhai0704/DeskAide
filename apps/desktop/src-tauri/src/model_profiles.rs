@@ -7,6 +7,9 @@ use url::Url;
 use uuid::Uuid;
 
 pub const MOCK_PROFILE_ID: &str = "mock-local";
+fn default_fast_response() -> bool {
+    true
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -19,6 +22,8 @@ pub enum ProviderType {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelProfile {
+    #[serde(default = "default_fast_response")]
+    pub prefer_fast_response: bool,
     pub id: String,
     pub name: String,
     pub provider_type: ProviderType,
@@ -34,6 +39,8 @@ pub struct ModelProfile {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelProfileInput {
+    #[serde(default = "default_fast_response")]
+    pub prefer_fast_response: bool,
     pub id: Option<String>,
     pub name: String,
     pub provider_type: ProviderType,
@@ -163,6 +170,7 @@ impl ProfileCollection {
 
     pub fn save(&mut self, input: ModelProfileInput) -> Result<ModelProfile, ProfileError> {
         let profile = ModelProfile {
+            prefer_fast_response: input.prefer_fast_response,
             id: input
                 .id
                 .clone()
@@ -217,12 +225,14 @@ impl ProfileCollection {
 
 pub fn mock_profile() -> ModelProfile {
     ModelProfile {
+        prefer_fast_response: true,
         id: MOCK_PROFILE_ID.to_owned(),
         name: "Mock Local".to_owned(),
         provider_type: ProviderType::Mock,
         base_url: String::new(),
         model_id: "mock-local".to_owned(),
         capabilities: ModelCapabilities {
+            supports_tools: false,
             supports_text: true,
             supports_images: false,
             supports_streaming: true,
@@ -314,6 +324,7 @@ mod tests {
 
     fn input(id: Option<&str>, name: &str) -> ModelProfileInput {
         ModelProfileInput {
+            prefer_fast_response: true,
             id: id.map(str::to_owned),
             name: name.to_owned(),
             provider_type: ProviderType::OpenAiCompatible,
@@ -346,6 +357,20 @@ mod tests {
         profiles.set_active(MOCK_PROFILE_ID).unwrap();
         profiles.delete(&created.id).unwrap();
         assert_eq!(profiles.profiles().len(), 1);
+    }
+
+    #[test]
+    fn legacy_profiles_default_to_fast_response_and_preserve_opt_out() {
+        let mut value = serde_json::to_value(mock_profile()).unwrap();
+        value.as_object_mut().unwrap().remove("preferFastResponse");
+        let legacy: ModelProfile = serde_json::from_value(value.clone()).unwrap();
+        assert!(legacy.prefer_fast_response);
+        value["preferFastResponse"] = serde_json::json!(false);
+        let opted_out: ModelProfile = serde_json::from_value(value).unwrap();
+        assert!(!opted_out.prefer_fast_response);
+        let restored: ModelProfile =
+            serde_json::from_str(&serde_json::to_string(&opted_out).unwrap()).unwrap();
+        assert!(!restored.prefer_fast_response);
     }
 
     #[test]

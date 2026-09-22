@@ -7,6 +7,11 @@ pub(crate) struct SseParser {
 
 impl SseParser {
     pub(crate) fn push(&mut self, bytes: &[u8]) -> Result<Vec<String>, ModelError> {
+        if self.buffer.len() + bytes.len() > deskaide_assistant_core::MAX_RESPONSE_BYTES {
+            return Err(ModelError::IncompatibleResponse(
+                "SSE frame exceeds size limit".into(),
+            ));
+        }
         self.buffer.extend_from_slice(bytes);
         let mut events = Vec::new();
         while let Some((block_end, delimiter_end)) = find_event_boundary(&self.buffer) {

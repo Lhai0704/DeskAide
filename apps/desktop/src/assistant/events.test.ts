@@ -1,46 +1,70 @@
-import { describe, expect, it } from 'vitest';
-import { initialResponseState, reduceResponseEvent } from './events';
-
-describe('response event reducer', () => {
-  it('accumulates stream deltas', () => {
-    let state = reduceResponseEvent(initialResponseState(), {
-      type: 'started',
-      requestId: 'one',
+import { describe, it, expect } from 'vitest';
+import {
+  initialResponseState,
+  reduceResponseEvent,
+  restoreSnapshot,
+  type AssistantEvent,
+} from './events';
+const header = { version: 1 as const, conversationId: 'c', turnId: 't', sequence: 1 };
+describe('assistant turn isolation', () => {
+  it('streams text and keeps partial text on cancellation', () => {
+    let s = initialResponseState('c', 't');
+    s = reduceResponseEvent(s, { ...header, type: 'textDelta', messageId: 'm', text: 'hello' });
+    s = reduceResponseEvent(s, { ...header, sequence: 2, type: 'turnCancelled', revision: 3 });
+    expect(s.content).toBe('hello');
+    expect(s.status).toBe('cancelled');
+    expect(
+      reduceResponseEvent(s, {
+        ...header,
+        sequence: 3,
+        type: 'textDelta',
+        messageId: 'm',
+        text: 'late',
+      }),
+    ).toBe(s);
+  });
+  it('rejects stale turns, other conversations, duplicates, and unsolicited idle events', () => {
+    const s = initialResponseState('c', 't');
+    const e: AssistantEvent = { ...header, type: 'textDelta', messageId: 'm', text: 'bad' };
+    expect(reduceResponseEvent(s, { ...e, turnId: 'old' })).toBe(s);
+    expect(reduceResponseEvent(s, { ...e, conversationId: 'other' })).toBe(s);
+    const idle = initialResponseState();
+    expect(reduceResponseEvent(idle, e)).toBe(idle);
+    const next = reduceResponseEvent(s, e);
+    expect(reduceResponseEvent(next, e)).toBe(next);
+  });
+  it('does not display reasoning as assistant text and preserves provider errors', () => {
+    let s = initialResponseState('c', 't');
+    s = reduceResponseEvent(s, {
+      ...header,
+      type: 'reasoningDelta',
+      messageId: 'm',
+      text: 'private reasoning',
     });
-    state = reduceResponseEvent(state, { type: 'delta', requestId: 'one', text: 'Desk' });
-    state = reduceResponseEvent(state, { type: 'delta', requestId: 'one', text: 'Aide' });
-    expect(state.content).toBe('DeskAide');
-    expect(state.status).toBe('streaming');
-  });
-
-  it('ignores events for another request', () => {
-    const state = { ...initialResponseState(), requestId: 'one' };
-    expect(reduceResponseEvent(state, { type: 'delta', requestId: 'two', text: 'wrong' })).toBe(
-      state,
-    );
-  });
-
-  it('keeps partial content when generation is cancelled', () => {
-    const streaming = {
-      ...initialResponseState(),
-      requestId: 'one',
-      content: 'partial',
-      status: 'streaming' as const,
-    };
-    const cancelled = reduceResponseEvent(streaming, { type: 'cancelled', requestId: 'one' });
-
-    expect(cancelled.content).toBe('partial');
-    expect(cancelled.status).toBe('cancelled');
-  });
-
-  it('presents provider error categories without discarding details', () => {
-    const failed = reduceResponseEvent(initialResponseState(), {
-      type: 'failed',
-      requestId: 'one',
+    expect(s.content).toBe('');
+    s = reduceResponseEvent(s, {
+      ...header,
+      sequence: 2,
+      type: 'turnFailed',
+      revision: 2,
       code: 'rate_limited',
-      message: 'retry after 60 seconds',
+      message: 'try later',
     });
-    expect(failed.error).toContain('请求过于频繁');
-    expect(failed.error).toContain('retry after 60 seconds');
+    expect(s.error).toContain('429');
+  });
+  it('recovers a newer snapshot without accepting another turn', () => {
+    const s = initialResponseState('c', 't');
+    const snapshot = {
+      conversationId: 'c',
+      turnId: 't',
+      sequence: 8,
+      content: 'saved',
+      status: 'completed' as const,
+      approval: null,
+      revision: 4,
+      error: null,
+    };
+    expect(restoreSnapshot(s, snapshot).content).toBe('saved');
+    expect(restoreSnapshot(s, { ...snapshot, turnId: 'old' })).toBe(s);
   });
 });

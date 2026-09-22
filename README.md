@@ -1,10 +1,10 @@
 # DeskAide
 
-DeskAide 是一个常驻 Windows 桌面的电子 AI 助手入口。它以可拖动的透明助手形象驻留在桌面，通过独立的 Assistant 面板连接 OpenAI-Compatible 文字模型，并允许用户把选中文字或多个外部窗口中可访问的文字作为本次提问的上下文。
+DeskAide 是一个常驻 Windows 桌面的电子 AI 助手入口。它以可拖动的透明助手形象驻留在桌面，通过独立的 Assistant 面板连接 OpenAI-Compatible 模型，支持经批准的本地 MCP 工具，并允许用户把选中文字、剪贴板或多个外部窗口中可访问的文字作为本轮提问的上下文。
 
 当前项目基于 Tauri 2、Svelte 5 和 Rust，仍处于早期开发阶段，仅实现并验证 Windows。
 
-> DeskAide 不会持续读取屏幕或监控其他应用。只有用户主动选择上下文并发送时，它才会尝试读取相应文字；发送前可以查看和编辑从外部窗口生成的上下文草稿。
+> DeskAide 不会持续读取屏幕或监控其他应用。只有用户点击预览或添加相应来源时，才会读取文字；发送前可以查看、编辑和移除草稿，发送后不自动沿用到下一轮。
 
 ## 功能概览
 
@@ -15,7 +15,8 @@ DeskAide 是一个常驻 Windows 桌面的电子 AI 助手入口。它以可拖�
 - Assistant 面板支持紧凑/展开、临时置顶、失焦隐藏，以及跟随助手形象重新定位。
 - 支持浅色与深色主题，选择会保存在本机并在下次启动时恢复。
 - 默认使用机器人静态形象，支持单击激活和拖动。
-- 助手形象由 Manifest 驱动，当前目录提供机器人静态资源包。
+- 助手形象由 Manifest 驱动，保留 static/video，并支持本地 Live2D v3 pack：窗口外鼠标注视、idle/眨眼、状态动作、点击反馈和真实播放音量驱动嘴型。
+- Live2D SDK/Core 和角色资源需按[本地准备说明](docs/live2d.md)提供；默认仍使用仓库内的机器人形象。
 
 ### 对话与模型
 
@@ -24,18 +25,33 @@ DeskAide 是一个常驻 Windows 桌面的电子 AI 助手入口。它以可拖�
 - 有用户消息的对话自动保存在本机；历史抽屉支持继续对话、重命名和删除。
 - 每条历史记录保存其模型 Profile；载入时会尝试恢复原模型，但应用启动后仍默认进入空白新对话。
 - 支持多个模型 Profile、默认模型、对话中切换模型和手动连接测试。
+- Google 官方兼容端点的 `gemini-3.5-flash` 提供“优先快速回应”（默认开启），使用 `reasoning_effort: minimal` 减少简单聊天的思考等待；关闭后使用服务默认思考级别。该模型保留服务默认采样参数，其他模型不受影响。流式输出不能消除服务开始输出前的等待，实际延迟仍取决于服务和网络。
 - API Key 按 Profile 隔离保存在 Windows Credential Manager，不进入普通配置文件或前端 IPC 响应。
-- 内置不发送网络请求的 Mock Provider，未配置真实模型时也可离线体验和开发。
+- 内置不发送网络请求的 Mock Provider，未配置真实模型时也可离线体验和开发；Mock 返回收悉提示，不回显可能含临时上下文的完整输入。
 - Rust 后端向前端提供模型能力和上下文窗口大小，尚不可用的上下文选项会显示明确原因。
+
+### Agent 与本地工具
+
+- 独立 Rust AssistantRuntime 管理 turn、取消、上下文组合和多步工具循环；Provider 只负责模型 API。
+- 模型设置中的“支持工具调用”默认关闭；确认服务支持标准 OpenAI tool calling 后再开启。旧 Profile 与 Mock 保持普通聊天。
+- 设置 → MCP 可添加、编辑、禁用、删除、测试和重连 stdio server，默认不启动任何进程；启用的 server 在支持工具的聊天中按需连接。
+- 外部 MCP 工具逐次展示工具名、来源及完整可展开参数，点击 **Allow once / Deny**。拒绝、失败和超时会作为结果交回模型；停止生成、新问题或切换会话取消旧等待。
+- 多调用按顺序执行；每轮最多 8 次模型请求、32 次工具调用。工具错误不会使普通聊天无法使用。
+- 结构化 v2 历史保留模型调用和工具结果。含临时桌面上下文时，参数和结果默认不保存；只有批准卡片中另行勾选才保存本次调用。
+- 本地 MCP 程序以当前用户权限运行，逐次工具批准不是操作系统沙箱。只配置可信程序；不自动安装 server，不支持自定义环境变量或通过参数保存密钥。
+
+配置示例、限制和清理规则见 [MCP stdio 使用说明](docs/mcp.md)。
+
+本次 Runtime 与 MCP 升级的自动化覆盖、构建结果和未验证范围见 [架构升级验证记录](docs/agent-runtime-validation.md)。
 
 ### 可编辑的桌面上下文
 
-- 保留原有“当前选中文字”流程：记录 Assistant 激活前的外部窗口，仅在用户勾选并发送后读取选区。
+- 记录 Assistant 激活前的外部窗口；用户点击预览或添加后才读取选区或剪贴板，生成可编辑草稿。
 - 可以枚举当前可见的外部顶层窗口，任意多选并分别采集可访问文字。
 - 每个窗口上下文以摘要卡片展示；单击后可在独立编辑窗口中预览、修改将要发送的完整草稿。
 - 通过 Windows UI Automation 尽力获取选中文字或指定窗口公开的可访问文字，单次采集设有 3 秒超时。
 - 发送前按当前模型的上下文预算截断文字；某项采集失败不会阻止普通提问。
-- 窗口文字、选中文字和临时草稿只参与本次模型请求，不会写入历史对话正文或自动沿用到下一轮。
+- 窗口文字、选中文字和临时草稿只参与当前 turn（包括本轮工具循环），不会自动写入历史或沿用到下一轮。模型回复主动引用的内容仍会随助手回复保存。
 
 ### 实时语音播报
 
@@ -56,7 +72,7 @@ DeskAide 是一个常驻 Windows 桌面的电子 AI 助手入口。它以可拖�
 - Windows 10 1803 或更新版本
 - Microsoft Edge WebView2 Runtime
 - Microsoft C++ Build Tools（安装“使用 C++ 的桌面开发”工作负载）
-- Rust stable MSVC toolchain（项目最低 Rust 版本为 1.85）
+- Rust stable MSVC toolchain（项目最低 Rust 版本为 1.88）
 - Node.js 24+ 和 npm 11+
 
 完整的 Tauri Windows 前置条件见 [Tauri 官方文档](https://v2.tauri.app/start/prerequisites/)。
@@ -91,7 +107,7 @@ Model ID: LongCat-2.0
 ### 添加窗口上下文
 
 1. 打开输入区旁的上下文菜单。
-2. 若要读取激活前窗口中的选区，勾选“当前选中文字”。
+2. 点击选中文字或剪贴板的“预览”，检查后点击“添加”；也可以直接添加后编辑草稿。
 3. 若要添加其他窗口，刷新窗口列表并多选目标窗口，然后生成上下文草稿。
 4. 单击摘要卡片可检查和修改草稿；确认后随问题一起发送。
 
@@ -104,9 +120,11 @@ npm run format:check
 npm run lint
 npm run check
 npm run test
+npm run build
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+git diff --check
 ```
 
 生成不依赖本地 Vite 服务、可直接双击运行的 Debug EXE：
@@ -128,12 +146,15 @@ npm run tauri -- build
 ```text
 apps/desktop/              Svelte 前端与 Tauri Windows 应用
   src/assistant/           对话、历史记录和上下文编辑界面
-  src/avatar/              形象资源包加载与静态/视频渲染
-  src/settings/            主题、形象、快捷键、语音和模型 Profile 设置
+  src/avatar/              形象行为层与 static/video/Live2D 渲染
+  src/settings/            主题、形象、快捷键、语音、MCP 和模型 Profile 设置
   src-tauri/               窗口协调、IPC、凭据和本地持久化
-crates/assistant-core/     共享请求、消息、上下文和事件类型
+crates/assistant-core/     共享请求、结构化 transcript、AssistantEvent 与工具 DTO
+crates/assistant-runtime/  Session、hooks、上下文组合、取消和 Agent tool loop
+crates/tool-core/          工具注册、Schema 校验、权限和执行接口
+crates/mcp-client/         官方 rmcp stdio 客户端与自有进程管理
 crates/ai-provider/        Mock 与 OpenAI-Compatible ModelProvider
-crates/context-core/       ContextProvider 与 PlatformIntegration
+crates/context-core/       Context Registry、ContextProvider 与 PlatformIntegration
 crates/platform-windows/   Windows 窗口追踪与 UI Automation 能力
 docs/                      架构、形象资源格式和 Windows 限制
 ```
@@ -141,7 +162,8 @@ docs/                      架构、形象资源格式和 Windows 限制
 更多设计说明：
 
 - [当前架构](docs/architecture.md)
-- [静态助手形象资源包格式（v1）](docs/avatar-pack-format.md)
+- [助手形象资源包格式（v1/v2/v3）](docs/avatar-pack-format.md)
+- [Live2D 本地准备、许可与验证](docs/live2d.md)
 - [Windows 已知限制](docs/windows-limitations.md)
 
 ## 隐私与安全边界
@@ -152,7 +174,7 @@ docs/                      架构、形象资源格式和 Windows 限制
 - 历史对话之间彼此隔离，不会跨对话注入消息、摘要或其他记忆信息。
 - API Key 只保存在 Windows Credential Manager；`Authorization`、Cookie、Token、Secret 等敏感自定义 Header 会被拒绝。
 - Mock Provider 不发送网络请求。
-- 当前未实现 OCR、持续截图、剪贴板读取、活动历史、语音输入、Agent 或电脑操作。
+- 当前未实现 memory、computer use、Shell Agent、语音输入、OCR、持续截图、remote MCP、云端服务或插件市场。
 
 ## 激活快捷键
 
@@ -174,3 +196,5 @@ docs/                      架构、形象资源格式和 Windows 限制
 ## 许可证
 
 [MIT](LICENSE)
+
+MIT 仅覆盖 DeskAide 自有代码。Live2D SDK/Core 与第三方模型遵守各自许可，本仓库不包含这些资源；本地准备与发布边界见 [Live2D 文档](docs/live2d.md)。
