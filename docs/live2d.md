@@ -58,15 +58,21 @@ Core 不是 MIT 软件。保留原始声明、SDK/Core LICENSE、Open/Proprietar
 
 使用官方 Framework 5-r.5 + Core 的 **WebGL2** 路径，不依赖 Pixi。SDK 支持范围与 DeskAide 实测范围不同：`.model3.json` 不表示所有 Cubism 功能一定兼容。当前开发样例为 Haru（MOC version 1）和 Ren（MOC version 6）；不要由此宣称所有 Cubism 4/5 导出模型都通过验证。
 
-默认 30 FPS、DPR 上限 2，隐藏时暂停；关闭全部动画/追踪后按需重绘。切包销毁模型、纹理、动作、监听和 WebGL context。Core JS 在同一个 WebView 中只加载一次；模型实例及分配在 dispose 时释放。
+默认目标约 60 FPS。画布按屏幕 DPR 设置，模型先画到宽高各 2 倍的离屏缓冲，再将每组 2×2 像素的预乘 RGBA 一起做面积平均。不能只取最高 alpha 像素的颜色，否则不透明区域的嘴唇、衣服细线仍会随采样位置出现或消失；也不人为放大边缘 alpha。隐藏时暂停；关闭全部动画/追踪后按需重绘。切包销毁模型、纹理、动作、监听和 WebGL context。Core JS 在同一个 WebView 中只加载一次；模型实例及分配在 dispose 时释放。贴图在 `createImageBitmap` 解码时显式预乘 alpha（ImageBitmap 上传忽略 `UNPACK_PREMULTIPLY_ALPHA_WEBGL`），并生成 mipmap。裁剪蒙版保留高精细模式、使用最多 2048 的缓冲，降低每个裁剪部件重复清空/重画 4096² 目标的开销。未写 layout 时，缩放 1 表示模型高度为容纳尺寸的 2 倍，模型中心落在窗口底边，上半身铺满窗口。
 
 模型/贴图失败、Core 缺失、WebGL 故障显示可点击 DA fallback，聊天和 TTS 不受影响。可选动作、表情、physics/pose 加载失败跳过对应项。WebGL context 恢复最多自动尝试一次，可切换形象重新加载。
 
-窗口默认由 manifest 决定，最大 360×480 逻辑像素并限制在工作区。**透明边缘仍占用鼠标命中区域**，本版不承诺逐像素穿透。没有透明像素读取、全局鼠标 hook 或 Win32 子类化。
+窗口默认由 manifest 决定，最大 640×900 逻辑像素并限制在工作区。**透明边缘仍占用鼠标命中区域**，本版不承诺逐像素穿透。没有透明像素读取、全局鼠标 hook 或 Win32 子类化。
 
 ## 验证
 
 `npm run test:live2d` 使用本机 Edge 的真实 WebGL2、官方 Core/模型，检查透明像素、口型和连续切换释放。缺资源直接失败，不静默跳过。报告在 `.local/live2d/verification`，不入 Git。
+
+`node scripts/test-live2d-quality.mjs` 在真实 WebGL2 上检查四种子像素位置的细线、透明边缘覆盖率和预乘颜色混合，并在 100%/150%/200% DPI 渲染本地 Haru/Hiyori，保存 PNG、GPU 名称及帧间隔到 `verification/quality/after`。需要额外准备合法取得的 Hiyori 包；缺资源直接失败。`--baseline` 将当前结果写到 `quality/before` 并跳过新算法断言，便于在修改前取样。
+
+2026-09-22 本机 Edge/Intel UHD Graphics 测试：560×720 CSS 像素，三个 DPI 的 Haru/Hiyori 新版帧间隔中位数均约 16.7 ms；修改前 Haru 为 22.8–24.6 ms。此数据是短时浏览器渲染测量，不代表所有显卡、桌面合成器或模型的表现。新版细线四个位置均输出约 191 灰度（旧版为 0/255/255/255）；四分之一覆盖的白色边缘输出 alpha 64（旧版 226）。实际桌面运动观感和多显示器效果仍需人工验收。
+
+同日 Debug WebView2 实测 Haru/Hiyori 均正常加载并保存截图：150% DPI，canvas 为 831×1071 物理像素，对应 554×714 CSS 像素，未出现 fallback 或 WebGL 错误。测试后恢复原形象设置并关闭测试进程。截图在 `verification/quality/webview-*.png`。
 
 `scripts/test-live2d-webview.mjs` 可连接为测试单独启动的 Debug WebView2（loopback CDP 9227），验证两个模型、窗口尺寸与系统鼠标适配，并恢复原选择。CDP 仅在手动测试启动时设置，不进入发布配置。浏览器测试不能替代实际桌面交互与多显示器视觉确认。
 
@@ -80,4 +86,4 @@ Core 不是 MIT 软件。保留原始声明、SDK/Core LICENSE、Open/Proprietar
 - 本机 Qwen3-TTS 0.6B 试听通过，隐藏面板保持播放，测得模型口部参数峰值约 0.23，停止后 presentation 归零。
 - 32 逻辑处理器机器，CDP 调试连接下各采样约 5 秒：static 占单核约 2.5%，Live2D idle+tracking 约 37.4%（整机约 1.2%），关闭所有动画后约 10.6%。avatar WebView 的任务时间分别约 1.7%、10.3%、1.7%。整个 DeskAide 进程树工作集约 672/754/757 MiB；包含多个 WebView 和调试开销，不是模型独占内存或长期基准。
 
-尚需一次实际鼠标拖动与视觉确认；本机没有完成跨不同 DPI 实体显示器的拖拽验收，相关坐标数学已覆盖 100/125/150/200% 和负坐标单元测试。默认 30 FPS 不代表所有硬件与所有模型都有相同消耗。
+尚需一次实际鼠标拖动与视觉确认；本机没有完成跨不同 DPI 实体显示器的拖拽验收，相关坐标数学已覆盖 100/125/150/200% 和负坐标单元测试。约 60 FPS 和高精细蒙版不代表所有硬件与所有模型都有相同消耗。

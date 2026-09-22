@@ -3,6 +3,8 @@ import type { Live2DAvatarPackManifest, AvatarPreferences, SemanticState } from 
 import { loadRuntime, type SDKModel } from './runtime';
 import { MotionController } from './motion';
 import { Gaze } from './gaze';
+import { backingStoreScale, frameDue, stageFrame } from './frame';
+import { LineResolve } from './resolve';
 export interface RendererInput {
   state: SemanticState;
   speakingLevel: number;
@@ -57,6 +59,7 @@ export class Live2DRenderer {
   private previousInteraction = 0;
   private mouthWasActive = false;
   private tapExpression: string | undefined;
+  private scene: LineResolve;
   constructor(
     private canvas: HTMLCanvasElement,
     private pack: Live2DAvatarPackManifest,
@@ -65,13 +68,18 @@ export class Live2DRenderer {
     private fail: (e: Error) => void,
   ) {
     this.input = input;
+    // The offscreen 2× target supplies antialiasing; default-buffer MSAA cannot
+    // smooth texture details and does not apply to that target.
     const gl = canvas.getContext('webgl2', {
       alpha: true,
+      antialias: false,
       premultipliedAlpha: true,
       preserveDrawingBuffer: false,
+      powerPreference: 'high-performance',
     });
     if (!gl) throw new Error('WebGL 不可用');
     this.gl = gl;
+    this.scene = new LineResolve(gl);
     this.observer = new ResizeObserver(() => this.resize());
     this.observer.observe(canvas);
     this.resize();
@@ -94,7 +102,11 @@ export class Live2DRenderer {
     const model = this.model;
     for (const [index, path] of data.FileReferences.Textures.entries()) {
       const bytes = await read(base + path);
-      const bitmap = await createImageBitmap(new Blob([bytes]));
+      // ImageBitmap ignores UNPACK_PREMULTIPLY_ALPHA_WEBGL at upload time.
+      // Match Cubism's ONE / ONE_MINUS_SRC_ALPHA blending when decoding instead.
+      const bitmap = await createImageBitmap(new Blob([bytes]), {
+        premultiplyAlpha: 'premultiply',
+      });
       if (signal.aborted) {
         bitmap.close();
         signal.throwIfAborted();
@@ -106,7 +118,6 @@ export class Live2DRenderer {
       }
       this.textures.push(texture);
       this.gl.bindTexture(this.gl.TEXTURE_2D, texture);
-      this.gl.pixelStorei(this.gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, 0);
       this.gl.texImage2D(
         this.gl.TEXTURE_2D,
         0,
@@ -116,8 +127,16 @@ export class Live2DRenderer {
         bitmap,
       );
       bitmap.close();
-      this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.LINEAR);
+      // Mipmaps stop a one-texel stroke from being sampled on and off as it moves.
+      this.gl.texParameteri(
+        this.gl.TEXTURE_2D,
+        this.gl.TEXTURE_MIN_FILTER,
+        this.gl.LINEAR_MIPMAP_LINEAR,
+      );
       this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.LINEAR);
+      this.gl.generateMipmap(this.gl.TEXTURE_2D);
+      if (this.gl.getError() !== this.gl.NO_ERROR)
+        this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.LINEAR);
       this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
       this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_T, this.gl.CLAMP_TO_EDGE);
       model.texture(index, texture);
@@ -164,10 +183,14 @@ export class Live2DRenderer {
   }
   resize() {
     const r = this.canvas.getBoundingClientRect();
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    this.canvas.width = Math.max(1, Math.round(r.width * dpr));
-    this.canvas.height = Math.max(1, Math.round(r.height * dpr));
-    this.model?.resize(this.canvas.width, this.canvas.height);
+    const dpr = backingStoreScale(window.devicePixelRatio);
+    const width = Math.max(1, Math.round(r.width * dpr));
+    const height = Math.max(1, Math.round(r.height * dpr));
+    this.canvas.width = width;
+    this.canvas.height = height;
+    const sampled = this.scene.resize(width, height);
+    const target = sampled ? this.scene.target() : null;
+    this.model?.resize(target?.width ?? width, target?.height ?? height);
     if (this.model) this.schedule();
   }
   private schedule() {
@@ -177,11 +200,11 @@ export class Live2DRenderer {
   private tick(now: number) {
     this.frame = 0;
     if (!this.alive || this.paused || !this.model) return;
-    if (now - this.last < 1000 / 30) {
+    if (!frameDue(now, this.last)) {
       this.schedule();
       return;
     }
-    const dt = this.last ? Math.min(0.1, (now - this.last) / 1000) : 1 / 30;
+    const dt = this.last ? Math.min(0.1, (now - this.last) / 1000) : 1 / 60;
     this.last = now;
     try {
       const i = this.input,
@@ -189,16 +212,12 @@ export class Live2DRenderer {
       const w = this.canvas.clientWidth,
         h = this.canvas.clientHeight;
       const dimensions = this.model.dimensions();
-      const ratio = dimensions.width / dimensions.height;
-      const scale = (this.pack.layout?.scale ?? 1) * p.scale;
-      const fittedHeight = Math.min(h, w / ratio) * scale;
-      const fittedWidth = fittedHeight * ratio;
-      const anchor = this.pack.layout?.anchor ?? { x: 0.5, y: 0.5 };
-      const position = this.pack.layout?.position ?? { x: 0.5, y: 0.5 };
-      const center = {
-        x: w * position.x + (0.5 - anchor.x) * fittedWidth,
-        y: h * (position.y + p.verticalPosition) + (0.5 - anchor.y) * fittedHeight,
-      };
+      const frame = stageFrame({ width: w, height: h }, dimensions, this.pack.layout, p);
+      if (!frame) {
+        this.schedule();
+        return;
+      }
+      const { fittedWidth, fittedHeight, center } = frame;
       const gaze = this.gaze.update(
         p.mouseTracking ? i.cursorFocus : null,
         { ...center, width: fittedWidth, height: fittedHeight },
@@ -228,7 +247,11 @@ export class Live2DRenderer {
             ? this.pack.expressions?.thinking
             : this.pack.expressions?.neutral,
       );
-      this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+      const target = this.scene.target();
+      if (target) {
+        this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, target.framebuffer);
+        this.gl.viewport(0, 0, target.width, target.height);
+      } else this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
       this.gl.clearColor(0, 0, 0, 0);
       this.gl.clear(this.gl.COLOR_BUFFER_BIT);
       this.model.frame(dt, {
@@ -239,11 +262,13 @@ export class Live2DRenderer {
         speaking: i.state === 'speaking',
         level: i.speakingLevel,
         closeMouth: this.mouthWasActive,
-        sx: fittedHeight / w,
-        sy: fittedHeight / h,
-        tx: ((center.x / w) * 2 - 1) / (fittedHeight / w),
-        ty: (1 - (center.y / h) * 2) / (fittedHeight / h),
+        sx: frame.sx,
+        sy: frame.sy,
+        tx: frame.tx,
+        ty: frame.ty,
+        ...(target ? { target } : {}),
       });
+      if (target) this.scene.present(this.canvas.width, this.canvas.height);
       this.mouthWasActive = i.state === 'speaking';
     } catch (e) {
       this.pause(true);
@@ -272,6 +297,7 @@ export class Live2DRenderer {
     this.model = null;
     for (const t of this.textures) this.gl.deleteTexture(t);
     this.textures = [];
+    this.scene.dispose();
     if (releaseContext) this.gl.getExtension('WEBGL_lose_context')?.loseContext();
   }
 }

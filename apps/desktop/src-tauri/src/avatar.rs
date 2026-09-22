@@ -277,9 +277,10 @@ pub fn resize_avatar(app: AppHandle, width: f64, height: f64) -> Result<(), Stri
         .ok_or("显示器不存在")?;
     let area = monitor.work_area();
     let dpi = w.scale_factor().map_err(|e| e.to_string())?;
+    // Large enough for the stage size AIRI uses on this desktop (about 560×720).
     let size = Size {
-        width: ((width.min(360.) * dpi).round() as u32).min(area.size.width),
-        height: ((height.min(480.) * dpi).round() as u32).min(area.size.height),
+        width: ((width.min(640.) * dpi).round() as u32).min(area.size.width),
+        height: ((height.min(900.) * dpi).round() as u32).min(area.size.height),
     };
     let old = w.outer_size().map_err(|e| e.to_string())?;
     let p = w.outer_position().map_err(|e| e.to_string())?;

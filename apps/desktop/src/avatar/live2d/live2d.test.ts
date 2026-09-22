@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { Gaze, localCursor } from './gaze';
 import { MotionController } from './motion';
 import { validateModelReferences } from './model';
+import { backingStoreScale, frameDue, stageFrame } from './frame';
 import { AvatarInteraction } from '../interaction';
 import { assertManifest, safeAssetPath } from '../manifest';
 const pack = {
@@ -47,6 +48,46 @@ describe('Live2D manifests and assets', () => {
         },
       }),
     ).toThrow();
+  });
+});
+describe('stage framing', () => {
+  const prefs = { scale: 1, verticalPosition: 0 };
+  it('fills a portrait window with the upper body and keeps pixels square', () => {
+    const view = { width: 240, height: 320 };
+    const frame = stageFrame(view, { width: 2, height: 2 }, undefined, prefs);
+    expect(frame).not.toBeNull();
+    expect(frame!.fittedHeight).toBe(480);
+    expect(frame!.fittedWidth).toBe(480);
+    expect(frame!.tx).toBeCloseTo(0);
+    expect(frame!.ty).toBeCloseTo(-1);
+    expect(frame!.sx * (view.width / 2)).toBeCloseTo(frame!.sy * (view.height / 2));
+  });
+  it('honors an explicit centered layout without stretching a wide model', () => {
+    const view = { width: 240, height: 320 };
+    const frame = stageFrame(
+      view,
+      { width: 4, height: 2 },
+      { scale: 1, anchor: { x: 0.5, y: 0.5 }, position: { x: 0.5, y: 0.5 } },
+      prefs,
+    );
+    expect(frame!.fittedWidth / frame!.fittedHeight).toBeCloseTo(2);
+    expect(frame!.tx).toBeCloseTo(0);
+    expect(frame!.ty).toBeCloseTo(0);
+    expect(frame!.sx * (view.width / 2)).toBeCloseTo(frame!.sy * (view.height / 2));
+  });
+  it.each([
+    [1, 1],
+    [1.25, 1.25],
+    [1.5, 1.5],
+    [2, 2],
+    [4, 4],
+  ])('keeps a %s display on whole device pixels', (dpr, scale) => {
+    expect(backingStoreScale(dpr)).toBe(scale);
+  });
+  it('draws on a 60Hz cadence and drops duplicate timestamps', () => {
+    expect(frameDue(100, 0)).toBe(true);
+    expect(frameDue(110, 100)).toBe(false);
+    expect(frameDue(115.2, 100)).toBe(true);
   });
 });
 describe('cursor and gesture math', () => {

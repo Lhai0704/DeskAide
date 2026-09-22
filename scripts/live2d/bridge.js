@@ -34,10 +34,33 @@ class Model extends CubismUserModel {
       this.settings = new CubismModelSettingJson(json, json.byteLength);
       this.loadModel(moc, true);
       if (!this._model) throw new Error("无法加载 moc3");
+      const layout = new Map();
+      if (this.settings.getLayoutMap(layout))
+        this._modelMatrix.setupFromLayout(layout);
       this.createRenderer(width, height);
-      this.getRenderer().startUp(gl);
+      const renderer = this.getRenderer();
+      // SDK 5 blends premultiplied and rejects the straight-alpha path.
+      renderer.setIsPremultipliedAlpha(true);
+      // Redraw each clip into the whole mask so thin lines are not packed into a corner.
+      renderer.useHighPrecisionMask(true);
+      // High-precision mode redraws/clears this target for every clipped mesh.
+      // 2048 preserves detailed masks without repeatedly clearing a 4096² target.
+      const mask = Math.min(2048, gl.getParameter(gl.MAX_TEXTURE_SIZE) || 2048);
+      if (renderer.getClippingMaskBufferSize() > 0)
+        renderer.setClippingMaskBufferSize(mask);
+      renderer.startUp(gl);
+      const aniso =
+        gl.getExtension("EXT_texture_filter_anisotropic") ||
+        gl.getExtension("WEBKIT_EXT_texture_filter_anisotropic");
+      if (aniso)
+        renderer.setAnisotropy(
+          Math.min(
+            8,
+            gl.getParameter(aniso.MAX_TEXTURE_MAX_ANISOTROPY_EXT) || 1,
+          ),
+        );
       this.shaderPath = new URL("./shaders/", import.meta.url).href;
-      this.getRenderer().loadShaders(this.shaderPath);
+      renderer.loadShaders(this.shaderPath);
       this._eyeBlink = CubismEyeBlink.create(this.settings);
       if (!this.settings.getEyeBlinkParameterCount()) {
         const ids = this._model.getModel().parameters.ids;
@@ -97,7 +120,7 @@ class Model extends CubismUserModel {
   }
   texture(index, texture) {
     this.getRenderer().bindTexture(index, texture);
-    this.getRenderer().setIsPremultipliedAlpha(false);
+    this.getRenderer().setIsPremultipliedAlpha(true);
   }
   start(key) {
     const item = this.motions.get(key);
@@ -162,7 +185,10 @@ class Model extends CubismUserModel {
     matrix.multiplyByMatrix(this._modelMatrix);
     const r = this.getRenderer();
     r.setMvpMatrix(matrix);
-    r.setRenderState(null, [0, 0, this.gl.canvas.width, this.gl.canvas.height]);
+    const target = input.target;
+    const width = target?.width || this.gl.canvas.width;
+    const height = target?.height || this.gl.canvas.height;
+    r.setRenderState(target?.framebuffer || null, [0, 0, width, height]);
     r.drawModel(this.shaderPath);
   }
   resize(w, h) {

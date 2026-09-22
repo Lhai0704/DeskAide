@@ -63,6 +63,7 @@ try {
   });
   const result = await page.evaluate(async () => {
     const { Live2DRenderer } = await import("/src/avatar/live2d/model.ts");
+    const { backingStoreScale } = await import("/src/avatar/live2d/frame.ts");
     const { avatarDefaults } = await import("/src/avatar/types.ts");
     const results = [];
     for (let index = 0; index < 22; index++) {
@@ -132,7 +133,9 @@ try {
           throw Error("Expression not released");
         canvas.style.width = "200px";
         renderer.resize();
-        if (canvas.width !== Math.round(200 * Math.min(2, devicePixelRatio)))
+        if (
+          canvas.width !== Math.round(200 * backingStoreScale(devicePixelRatio))
+        )
           throw Error("Resize/DPR mismatch");
         renderer.pause(true);
         const pausedAt = renderer.last;

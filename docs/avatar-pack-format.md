@@ -1,6 +1,6 @@
 # Avatar Pack v1 / v2 / v3
 
-v1 `static` 和 v2 `video` 保持兼容。共同字段：`id/name/version/defaultWidth/defaultHeight`。尺寸为逻辑像素，最终窗口受工作区和 360×480 上限约束。
+v1 `static` 和 v2 `video` 保持兼容。共同字段：`id/name/version/defaultWidth/defaultHeight`。尺寸为逻辑像素，最终窗口受工作区和 640×900 上限约束。
 
 ## Static / Video
 
@@ -33,10 +33,10 @@ v1 `static` 和 v2 `video` 保持兼容。共同字段：`id/name/version/defaul
   "version": "1.0.0",
   "alt": "桌面助手",
   "preview": "preview.png",
-  "defaultWidth": 240,
-  "defaultHeight": 320,
+  "defaultWidth": 560,
+  "defaultHeight": 720,
   "model": "model/assistant.model3.json",
-  "layout": { "scale": 1, "anchor": { "x": 0.5, "y": 0.5 }, "position": { "x": 0.5, "y": 0.5 } },
+  "layout": { "scale": 1, "anchor": { "x": 0.5, "y": 0.5 }, "position": { "x": 0.5, "y": 1 } },
   "motions": { "idle": { "group": "Idle", "index": 0 }, "activated": { "group": "TapBody", "index": 0 } },
   "expressions": { "neutral": "Neutral", "thinking": "Thinking", "tap": "Smile" },
   "behavior": { "mouseTracking": true, "idleAnimation": true, "motions": true, "blink": "auto" },
@@ -44,7 +44,7 @@ v1 `static` 和 v2 `video` 保持兼容。共同字段：`id/name/version/defaul
 }
 ```
 
-除了基础信息、alt、preview、model 和窗口尺寸，其余字段可省略。layout 在 contain 布局上应用，anchor/position 为 0..1，scale 为大于 0 且不超过 3。用户设置的缩放在该基础上叠加。
+除了基础信息、alt、preview、model 和窗口尺寸，其余字段可省略。layout 叠在舞台取景上：省略 position 时模型中心在窗口底边，scale 1 使模型高度为容纳尺寸的 2 倍，上半身铺满窗口。显式 anchor/position 为 0..1，scale 为大于 0 且不超过 3。横纵使用同一像素比例，不会被窗口拉变形。用户设置的缩放在该基础上叠加。
 
 motions 支持 `idle/activated/thinking/responding/speaking/error`，group/index 引用模型已有动作，index 从 0 起。缺失映射回 idle；没有 idle 动作则继续 gaze/blink。expression 引用模型定义的名字，不由 LLM 生成。恢复 neutral 时释放旧表情。可选 `taps` 按模型 hit-area 名称指定 `{ motion: {group,index}, expression: "名称" }`，只增加视觉反馈。
 

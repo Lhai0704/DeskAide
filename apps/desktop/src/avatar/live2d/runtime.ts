@@ -23,6 +23,7 @@ export interface SDKModel {
       sy: number;
       tx: number;
       ty: number;
+      target?: { framebuffer: WebGLFramebuffer; width: number; height: number };
     },
   ): void;
   dimensions(): { width: number; height: number };
