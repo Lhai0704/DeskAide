@@ -29,7 +29,8 @@ export function assertManifest(value: unknown): asserts value is AvatarPackManif
   const isStaticManifest = value.schemaVersion === 1 && value.renderer === 'static';
   const isVideoManifest = value.schemaVersion === 2 && value.renderer === 'video';
   const isLive2D = value.schemaVersion === 3 && value.renderer === 'live2d';
-  if (!isStaticManifest && !isVideoManifest && !isLive2D) {
+  const isVrm = value.schemaVersion === 4 && value.renderer === 'vrm';
+  if (!isStaticManifest && !isVideoManifest && !isLive2D && !isVrm) {
     throw new Error('不支持的助手形象资源包 schemaVersion 或 renderer');
   }
 
@@ -44,6 +45,10 @@ export function assertManifest(value: unknown): asserts value is AvatarPackManif
   }
   if (isLive2D) {
     assertLive2D(value);
+    return;
+  }
+  if (isVrm) {
+    assertVrm(value);
     return;
   }
   if (!isObject(value.states)) throw new Error('助手形象资源包 states 无效');
@@ -136,6 +141,56 @@ function assertLive2D(v: Record<string, unknown>) {
       if (item.expression !== undefined && typeof item.expression !== 'string')
         throw new Error('无效 tap expression');
     }
+  }
+  if (
+    v.metadata !== undefined &&
+    (!isObject(v.metadata) || Object.values(v.metadata).some((x) => typeof x !== 'string'))
+  )
+    throw new Error('无效 metadata');
+}
+
+function hasExtension(value: string, extension: string) {
+  return value.toLowerCase().endsWith(extension);
+}
+
+function assertVrm(v: Record<string, unknown>) {
+  safeAssetPath(v.model);
+  safeAssetPath(v.preview);
+  if (typeof v.model !== 'string' || !hasExtension(v.model, '.vrm') || typeof v.alt !== 'string')
+    throw new Error('无效 VRM model/alt');
+  if ((v.defaultWidth as number) > 4096 || (v.defaultHeight as number) > 4096)
+    throw new Error('无效 VRM 尺寸');
+  if (v.layout !== undefined) {
+    if (!isObject(v.layout) || Object.keys(v.layout).some((key) => key !== 'scale'))
+      throw new Error('VRM layout 只支持 scale');
+    if (v.layout.scale !== undefined && (!isPositiveNumber(v.layout.scale) || v.layout.scale > 3))
+      throw new Error('无效 scale');
+  }
+  if (v.motions !== undefined) {
+    if (!isObject(v.motions)) throw new Error('无效 motions');
+    for (const [key, val] of Object.entries(v.motions)) {
+      if (!['idle', 'activated', 'thinking', 'responding', 'speaking', 'error'].includes(key))
+        throw new Error('无效语义状态');
+      safeAssetPath(val);
+      if (!hasExtension(val, '.vrma')) throw new Error('VRM 动作必须是 .vrma');
+    }
+  }
+  if (v.expressions !== undefined) {
+    if (!isObject(v.expressions)) throw new Error('无效 expressions');
+    for (const [key, val] of Object.entries(v.expressions))
+      if (!['neutral', 'thinking', 'tap'].includes(key) || typeof val !== 'string' || !val.trim())
+        throw new Error('无效 expression mapping');
+  }
+  if (v.behavior !== undefined) {
+    if (!isObject(v.behavior)) throw new Error('无效 behavior');
+    for (const key of ['mouseTracking', 'idleAnimation', 'motions'])
+      if (v.behavior[key] !== undefined && typeof v.behavior[key] !== 'boolean')
+        throw new Error('无效 behavior 开关');
+    if (
+      v.behavior.blink !== undefined &&
+      !['auto', 'model', 'fallback', 'off'].includes(v.behavior.blink as string)
+    )
+      throw new Error('无效 blink');
   }
   if (
     v.metadata !== undefined &&

@@ -1,4 +1,4 @@
-export type AvatarRenderer = 'static' | 'video' | 'live2d';
+export type AvatarRenderer = 'static' | 'video' | 'live2d' | 'vrm';
 export type AvatarStateName = 'idle' | 'activated';
 
 export interface AvatarState {
@@ -65,13 +65,54 @@ export interface Live2DAvatarPackManifest {
   };
   metadata?: { author?: string; license?: string };
 }
+export interface VrmAvatarPackManifest {
+  schemaVersion: 4;
+  renderer: 'vrm';
+  id: string;
+  name: string;
+  version: string;
+  alt: string;
+  preview: string;
+  defaultWidth: number;
+  defaultHeight: number;
+  model: string;
+  layout?: { scale?: number };
+  motions?: Partial<Record<SemanticState, string>>;
+  expressions?: Partial<Record<'neutral' | 'thinking' | 'tap', string>>;
+  behavior?: {
+    mouseTracking?: boolean;
+    idleAnimation?: boolean;
+    motions?: boolean;
+    blink?: 'auto' | 'model' | 'fallback' | 'off';
+  };
+  metadata?: { author?: string; license?: string };
+}
+export interface RendererInput {
+  state: SemanticState;
+  speakingLevel: number;
+  interaction: number;
+  cursorFocus: { x: number; y: number } | null;
+  preferences: AvatarPreferences;
+}
 export type MediaAvatarPackManifest = StaticAvatarPackManifest | VideoAvatarPackManifest;
-export type AvatarPackManifest = MediaAvatarPackManifest | Live2DAvatarPackManifest;
+export type AvatarPackManifest =
+  MediaAvatarPackManifest | Live2DAvatarPackManifest | VrmAvatarPackManifest;
+
+function posedPack(
+  pack?: AvatarPackManifest,
+): pack is Live2DAvatarPackManifest | VrmAvatarPackManifest {
+  return pack?.renderer === 'live2d' || pack?.renderer === 'vrm';
+}
+
+export function avatarUsesPointerMask(renderer: AvatarRenderer | undefined) {
+  return renderer === 'live2d' || renderer === 'vrm';
+}
+
 export const avatarDefaults = (pack?: AvatarPackManifest): AvatarPreferences => ({
-  mouseTracking: pack?.renderer === 'live2d' ? (pack.behavior?.mouseTracking ?? true) : true,
-  idleAnimation: pack?.renderer === 'live2d' ? (pack.behavior?.idleAnimation ?? true) : true,
-  autoBlink: pack?.renderer !== 'live2d' || pack.behavior?.blink !== 'off',
-  motions: pack?.renderer === 'live2d' ? (pack.behavior?.motions ?? true) : true,
+  mouseTracking: posedPack(pack) ? (pack.behavior?.mouseTracking ?? true) : true,
+  idleAnimation: posedPack(pack) ? (pack.behavior?.idleAnimation ?? true) : true,
+  autoBlink: !posedPack(pack) || pack.behavior?.blink !== 'off',
+  motions: posedPack(pack) ? (pack.behavior?.motions ?? true) : true,
   scale: 1,
   verticalPosition: 0,
 });

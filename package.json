@@ -8,6 +8,7 @@
   "scripts": {
     "prepare:live2d": "node scripts/prepare-live2d.mjs",
     "test:live2d": "node scripts/test-live2d.mjs",
+    "test:vrm": "node scripts/test-vrm.mjs",
     "dev": "npm run dev --workspace @deskaide/desktop",
     "tauri": "npm run tauri --workspace @deskaide/desktop --",
     "build": "npm run build --workspace @deskaide/desktop",

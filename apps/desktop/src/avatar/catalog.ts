@@ -36,10 +36,13 @@ export async function discoverPacks() {
       local.push({
         id: m.id,
         name: m.name,
-        description: '本地形象',
+        description:
+          m.renderer === 'vrm' ? '本地 VRM' : m.renderer === 'live2d' ? '本地 Live2D' : '本地形象',
         root,
         preview:
-          m.renderer === 'live2d' ? `${root}/${m.preview}` : `${root}/${m.states.idle.asset}`,
+          m.renderer === 'live2d' || m.renderer === 'vrm'
+            ? `${root}/${m.preview}`
+            : `${root}/${m.states.idle.asset}`,
       });
     } catch {
       /* Invalid packs cannot enter the catalog. */

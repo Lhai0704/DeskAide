@@ -1,5 +1,5 @@
 import { safeAssetPath } from '../manifest';
-import type { Live2DAvatarPackManifest, AvatarPreferences, SemanticState } from '../types';
+import type { Live2DAvatarPackManifest, RendererInput } from '../types';
 import { loadRuntime, type SDKModel } from './runtime';
 import { MotionController } from './motion';
 import { Gaze } from './gaze';
@@ -12,13 +12,8 @@ import {
   publishHitMask,
   sameHitMask,
 } from './passthrough';
-export interface RendererInput {
-  state: SemanticState;
-  speakingLevel: number;
-  interaction: number;
-  cursorFocus: { x: number; y: number } | null;
-  preferences: AvatarPreferences;
-}
+
+export type { RendererInput };
 interface ModelJSON {
   FileReferences: {
     Moc: string;

@@ -73,7 +73,9 @@ Transcript 包含 user/assistant/tool 消息、call ID/参数、结果、工具�
 
 Live2D renderer 通过独立本地 SDK adapter 使用官方 Cubism Web Framework 5-r.5/WebGL2。SDK/Core 不进入源码仓库，只有选择 Live2D 才加载。manifest v3 保留 v1/v2；catalog 合并 bundled pack 与受限本地 pack。原生适配只提供窗口 resize、受限文件资源和 GetCursorPos 当前坐标采样。形象不增加 MCP/LLM tool。
 
-形象尺寸来自 manifest，保留底部中心并限制工作区，最大 640×900 逻辑像素；DPI 变化重新协调。鼠标超过 5 个逻辑像素才启动原生拖动。透明区域仍是矩形 hit region。具体资源生命周期、许可与测试边界见 [Live2D](live2d.md)。
+VRM renderer 使用随应用打包的 three.js 与 `@pixiv/three-vrm`，只在选择 VRM 形象后创建 WebGL 场景。manifest v4 的模型是包内 `.vrm`，可选 `.vrma` 对应语义状态。取景固定为上半身，注视、眨眼、呼吸和口型都由同一份 presentation 快照驱动。VRM 0 会转到与 VRM 1 相同的朝向，相机在模型正前方。
+
+形象尺寸来自 manifest，保留底部中心并限制工作区，最大 640×900 逻辑像素；DPI 变化重新协调。鼠标超过 5 个逻辑像素才启动原生拖动。Live2D 按可见网格、VRM 按骨骼胶囊发布同一张低分辨率命中遮罩，遮罩外的点击落到桌面；静态和视频形象仍是整窗命中。具体资源生命周期、许可与测试边界见 [Live2D](live2d.md) 和 [形象资源包](avatar-pack-format.md)。
 
 Tauri 在启动时创建 `avatar`、`assistant` 和 `context-editor` 三个窗口。Assistant 和上下文编辑器默认隐藏，助手形象窗口不可获取焦点。单击助手形象调用异步 Rust `toggle_assistant` 命令切换面板；全局快捷键在面板隐藏时显示面板，已显示时只聚焦，不再次隐藏。
 

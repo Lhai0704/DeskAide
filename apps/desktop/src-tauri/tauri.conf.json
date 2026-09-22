@@ -60,7 +60,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' http://avatar-local.localhost 'wasm-unsafe-eval'; img-src 'self' asset: http://asset.localhost http://avatar-local.localhost blob:; media-src 'self' http://avatar-local.localhost; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost http://avatar-local.localhost"
+      "csp": "default-src 'self'; script-src 'self' http://avatar-local.localhost 'wasm-unsafe-eval'; img-src 'self' asset: http://asset.localhost http://avatar-local.localhost blob:; media-src 'self' http://avatar-local.localhost; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost http://avatar-local.localhost blob:"
     }
   },
   "bundle": {

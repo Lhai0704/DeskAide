@@ -12,7 +12,7 @@
   } from './catalog';
   import { loadAvatarManifest, avatarAssetUrl } from './manifest';
   import { loadSettings, persistSettings, preferencesFor } from './preferences';
-  import { avatarDefaults, type AvatarPackManifest } from './types';
+  import { avatarDefaults, avatarUsesPointerMask, type AvatarPackManifest } from './types';
   import { AvatarBehavior, type Presentation } from './behavior/controller';
   import { AvatarInteraction } from './interaction';
   import { localCursor, type CursorSample } from './live2d/gaze';
@@ -103,7 +103,7 @@
       if (
         cursorBusy ||
         document.hidden ||
-        manifest?.renderer !== 'live2d' ||
+        !avatarUsesPointerMask(manifest?.renderer) ||
         !preferences.mouseTracking ||
         error
       )
@@ -153,7 +153,7 @@
   }
   function down(e: PointerEvent) {
     if (e.button !== 0) return;
-    if (manifest?.renderer === 'live2d' && !pointHitsAvatar(e.clientX, e.clientY)) {
+    if (avatarUsesPointerMask(manifest?.renderer) && !pointHitsAvatar(e.clientX, e.clientY)) {
       releaseAvatarPointer();
       return;
     }
@@ -163,7 +163,7 @@
     void invoke('set_avatar_interacting', { interacting: true });
   }
   async function move(e: PointerEvent) {
-    if (manifest?.renderer === 'live2d') {
+    if (avatarUsesPointerMask(manifest?.renderer)) {
       noteAvatarPointer(e.clientX, e.clientY, gesture.active);
     }
     if (!gesture.move(e.clientX, e.clientY)) return;
@@ -201,7 +201,7 @@
   onpointerup={up}
   onpointercancel={cancel}
   onpointerleave={() => {
-    if (!gesture.active && manifest?.renderer === 'live2d') releaseAvatarPointer();
+    if (!gesture.active && avatarUsesPointerMask(manifest?.renderer)) releaseAvatarPointer();
   }}
   onlostpointercapture={cancel}
 >
@@ -213,6 +213,17 @@
           input={{ ...presentation, cursorFocus: cursor, preferences }}
           onerror={(message) => (error = message)}
         />{/key}
+    {:else if manifest.renderer === 'vrm'}
+      {#await import('./renderers/VrmAvatar.svelte') then Vrm}
+        {#key renderKey}<Vrm.default
+            pack={manifest}
+            {root}
+            input={{ ...presentation, cursorFocus: cursor, preferences }}
+            onerror={(message) => (error = message)}
+          />{/key}
+      {:catch reason}
+        <span class="fallback" title={String(reason)}>DA</span>
+      {/await}
     {:else if manifest.renderer === 'video'}
       <VideoAvatar
         src={avatarAssetUrl(

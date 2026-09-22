@@ -16,7 +16,8 @@ DeskAide 是一个常驻 Windows 桌面的电子 AI 助手入口。它以可拖�
 - 支持浅色与深色主题，选择会保存在本机并在下次启动时恢复。
 - 默认使用机器人静态形象，支持单击激活和拖动。
 - 助手形象由 Manifest 驱动，保留 static/video，并支持本地 Live2D v3 pack：窗口外鼠标注视、idle/眨眼、状态动作、点击反馈和真实播放音量驱动嘴型。
-- Live2D SDK/Core 和角色资源需按[本地准备说明](docs/live2d.md)提供；默认仍使用仓库内的机器人形象。
+- 支持本地 VRM v4 pack：`.vrm` 模型、可选 `.vrma` 状态动作、鼠标注视、眨眼、呼吸，以及播报音量驱动的口型。角色以外的空白可以点到桌面。
+- Live2D SDK/Core 和角色资源需按[本地准备说明](docs/live2d.md)提供；VRM 运行时已随应用打包，模型文件放在同一本地形象目录。默认仍使用仓库内的机器人形象。
 
 ### 对话与模型
 
@@ -162,7 +163,7 @@ docs/                      架构、形象资源格式和 Windows 限制
 更多设计说明：
 
 - [当前架构](docs/architecture.md)
-- [助手形象资源包格式（v1/v2/v3）](docs/avatar-pack-format.md)
+- [助手形象资源包格式（v1/v2/v3/v4）](docs/avatar-pack-format.md)
 - [Live2D 本地准备、许可与验证](docs/live2d.md)
 - [Windows 已知限制](docs/windows-limitations.md)
 
@@ -191,10 +192,10 @@ docs/                      架构、形象资源格式和 Windows 限制
 - 应用重启后不会自动恢复上次打开的对话，需要从历史抽屉手动载入。
 - 429 限流错误不会自动重试，避免在用户不知情时重复请求或计费。
 - “测试连接”依赖 OpenAI-Compatible 模型详情端点；未实现该端点的 Provider 仍可能正常对话，但连接测试会失败。
-- 助手形象的透明区域仍属于窗口命中区域，暂不支持逐像素鼠标穿透。
+- 静态和视频形象的透明区域仍属于窗口命中区域。Live2D 与 VRM 按角色轮廓放行周围点击，不是逐像素穿透。
 
 ## 许可证
 
 [MIT](LICENSE)
 
-MIT 仅覆盖 DeskAide 自有代码。Live2D SDK/Core 与第三方模型遵守各自许可，本仓库不包含这些资源；本地准备与发布边界见 [Live2D 文档](docs/live2d.md)。
+MIT 仅覆盖 DeskAide 自有代码。Live2D SDK/Core 与第三方模型遵守各自许可，本仓库不包含这些资源；本地准备与发布边界见 [Live2D 文档](docs/live2d.md)。VRM 运行时使用的 three.js 与 `@pixiv/three-vrm` 为 MIT，模型文件同样不进入仓库。

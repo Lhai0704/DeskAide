@@ -144,22 +144,33 @@ pub fn resolve(root: &Path, relative: &str) -> Result<PathBuf, String> {
 }
 pub fn resolve_resource(root: &Path, relative: &str) -> Result<PathBuf, String> {
     let path = resolve(root, relative)?;
-    let extension = path.extension().and_then(|x| x.to_str()).unwrap_or("");
+    let extension = path
+        .extension()
+        .and_then(|x| x.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
     let allowed = if relative.starts_with("packs/") {
         matches!(
-            extension,
-            "json" | "moc3" | "png" | "jpg" | "jpeg" | "webp" | "webm" | "mp4"
+            extension.as_str(),
+            "json" | "moc3" | "png" | "jpg" | "jpeg" | "webp" | "webm" | "mp4" | "vrm" | "vrma"
         )
     } else {
         matches!(
             relative,
             "runtime/bridge.js" | "runtime/live2dcubismcore.min.js"
-        ) || (relative.starts_with("runtime/shaders/") && matches!(extension, "vert" | "frag"))
+        ) || (relative.starts_with("runtime/shaders/")
+            && matches!(extension.as_str(), "vert" | "frag"))
     };
     if !allowed {
         return Err("不允许的资源类型".into());
     }
-    if path.metadata().map_err(|e| e.to_string())?.len() > 64 * 1024 * 1024 {
+    // A self-contained VRM or VRMA is often larger than a Live2D texture.
+    let limit = if matches!(extension.as_str(), "vrm" | "vrma") {
+        128 * 1024 * 1024
+    } else {
+        64 * 1024 * 1024
+    };
+    if path.metadata().map_err(|e| e.to_string())?.len() > limit {
         return Err("资源超过大小限制".into());
     }
     Ok(path)
@@ -328,6 +339,12 @@ mod tests {
         std::fs::write(d.path().join("packs/a/script.js"), b"alert(1)").unwrap();
         assert!(resolve_resource(d.path(), "packs/a/model.json").is_ok());
         assert!(resolve_resource(d.path(), "packs/a/script.js").is_err());
+        std::fs::write(d.path().join("packs/a/model.vrm"), b"glTF").unwrap();
+        std::fs::write(d.path().join("packs/a/idle.vrma"), b"glTF").unwrap();
+        std::fs::write(d.path().join("packs/a/Model.VRM"), b"glTF").unwrap();
+        assert!(resolve_resource(d.path(), "packs/a/model.vrm").is_ok());
+        assert!(resolve_resource(d.path(), "packs/a/idle.vrma").is_ok());
+        assert!(resolve_resource(d.path(), "packs/a/Model.VRM").is_ok());
         std::fs::write(d.path().join("packs/a/角色.json"), b"{}").unwrap();
         assert!(resolve_resource_uri(d.path(), "packs/a/%E8%A7%92%E8%89%B2.json").is_ok());
         for path in ["packs/%2e%2e/secret.json", "packs/%252e%252e/secret.json"] {

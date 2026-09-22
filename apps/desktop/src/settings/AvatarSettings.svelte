@@ -119,7 +119,7 @@
       </button>
     {/each}
   </div>
-  {#if manifest?.renderer === 'live2d'}
+  {#if manifest?.renderer === 'live2d' || manifest?.renderer === 'vrm'}
     <div class="controls">
       {#each [['mouseTracking', '注视鼠标'], ['idleAnimation', '待机动画'], ['autoBlink', '自动眨眼'], ['motions', '模型动作']] as [key, label] (key)}
         <label
@@ -156,14 +156,18 @@
       <button type="button" disabled={saving} onclick={() => void change(avatarDefaults(manifest!))}
         >恢复默认</button
       >
-      <small>立即生效。透明边缘仍占用鼠标区域；模型大小不会扩大窗口。</small>
+      <small>
+        {manifest?.renderer === 'vrm'
+          ? '立即生效。角色身体可以拖动和点击，周围空白会点到桌面。模型大小不会扩大窗口。'
+          : '立即生效。透明边缘仍占用鼠标区域；模型大小不会扩大窗口。'}
+      </small>
     </div>
   {/if}
   <div class="controls">
     <small
       >{runtimeReady
-        ? '本地 Live2D runtime 已就绪'
-        : 'Live2D runtime 未安装；静态形象仍可使用。'}</small
+        ? '本地 Live2D runtime 已就绪。VRM 使用内置运行时。'
+        : 'Live2D runtime 未安装。静态形象和 VRM 仍可使用。'}</small
     ><small>{directory}</small>
     <button
       type="button"
