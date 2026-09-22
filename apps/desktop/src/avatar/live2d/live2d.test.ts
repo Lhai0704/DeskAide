@@ -108,7 +108,9 @@ describe('cursor and gesture math', () => {
   });
   it('never turns an out-and-back drag into a click', () => {
     const g = new AvatarInteraction();
+    expect(g.active).toBe(false);
     g.down(0, 0);
+    expect(g.active).toBe(true);
     expect(g.move(8, 0)).toBe(true);
     g.move(0, 0);
     expect(g.up()).toBe(false);

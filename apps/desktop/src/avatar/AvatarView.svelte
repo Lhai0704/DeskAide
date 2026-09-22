@@ -16,6 +16,7 @@
   import { AvatarBehavior, type Presentation } from './behavior/controller';
   import { AvatarInteraction } from './interaction';
   import { localCursor, type CursorSample } from './live2d/gaze';
+  import { noteAvatarPointer, pointHitsAvatar, releaseAvatarPointer } from './live2d/passthrough';
   import StaticAvatar from './renderers/StaticAvatar.svelte';
   import VideoAvatar from './renderers/VideoAvatar.svelte';
   import Live2DAvatar from './renderers/Live2DAvatar.svelte';
@@ -152,12 +153,19 @@
   }
   function down(e: PointerEvent) {
     if (e.button !== 0) return;
+    if (manifest?.renderer === 'live2d' && !pointHitsAvatar(e.clientX, e.clientY)) {
+      releaseAvatarPointer();
+      return;
+    }
     e.preventDefault();
     gesture.down(e.clientX, e.clientY);
     button.setPointerCapture(e.pointerId);
     void invoke('set_avatar_interacting', { interacting: true });
   }
   async function move(e: PointerEvent) {
+    if (manifest?.renderer === 'live2d') {
+      noteAvatarPointer(e.clientX, e.clientY, gesture.active);
+    }
     if (!gesture.move(e.clientX, e.clientY)) return;
     try {
       await getCurrentWindow().startDragging();
@@ -192,6 +200,9 @@
   onpointermove={move}
   onpointerup={up}
   onpointercancel={cancel}
+  onpointerleave={() => {
+    if (!gesture.active && manifest?.renderer === 'live2d') releaseAvatarPointer();
+  }}
   onlostpointercapture={cancel}
 >
   {#if manifest}

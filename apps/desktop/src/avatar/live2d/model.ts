@@ -5,6 +5,13 @@ import { MotionController } from './motion';
 import { Gaze } from './gaze';
 import { backingStoreScale, frameDue, stageFrame } from './frame';
 import { LineResolve } from './resolve';
+import {
+  clearHitMask,
+  fillHitMask,
+  fillTriangleHitMask,
+  publishHitMask,
+  sameHitMask,
+} from './passthrough';
 export interface RendererInput {
   state: SemanticState;
   speakingLevel: number;
@@ -58,6 +65,10 @@ export class Live2DRenderer {
   private observer: ResizeObserver;
   private previousInteraction = 0;
   private mouthWasActive = false;
+  private lastHitAt = 0;
+  private hitDirty = true;
+  private hitFailed = false;
+  private lastHitMask: Uint8Array | null = null;
   private tapExpression: string | undefined;
   private scene: LineResolve;
   constructor(
@@ -170,6 +181,11 @@ export class Live2DRenderer {
   }
   update(input: RendererInput) {
     const changed = JSON.stringify(input) !== JSON.stringify(this.input);
+    if (
+      input.preferences.scale !== this.input.preferences.scale ||
+      input.preferences.verticalPosition !== this.input.preferences.verticalPosition
+    )
+      this.hitDirty = true;
     this.input = input;
     if (!this.paused && changed) this.schedule();
   }
@@ -191,6 +207,7 @@ export class Live2DRenderer {
     const sampled = this.scene.resize(width, height);
     const target = sampled ? this.scene.target() : null;
     this.model?.resize(target?.width ?? width, target?.height ?? height);
+    this.hitDirty = true;
     if (this.model) this.schedule();
   }
   private schedule() {
@@ -270,6 +287,7 @@ export class Live2DRenderer {
       });
       if (target) this.scene.present(this.canvas.width, this.canvas.height);
       this.mouthWasActive = i.state === 'speaking';
+      this.maybePublishHit(now, frame.center, frame.fittedHeight);
     } catch (e) {
       this.pause(true);
       this.fail(e instanceof Error ? e : new Error(String(e)));
@@ -285,9 +303,38 @@ export class Live2DRenderer {
     )
       this.schedule();
   }
+  private maybePublishHit(now: number, center: { x: number; y: number }, fittedHeight: number) {
+    if (this.hitFailed || (!this.hitDirty && now - this.lastHitAt < 200)) return;
+    this.hitDirty = false;
+    this.lastHitAt = now;
+    try {
+      const triangles = this.model?.opaqueTriangles?.();
+      const geometry = triangles ?? this.model?.opaqueBounds();
+      if (!geometry) return;
+      const view = { width: window.innerWidth, height: window.innerHeight };
+      const origin = this.canvas.getBoundingClientRect();
+      const bits = (triangles ? fillTriangleHitMask : fillHitMask)(
+        view,
+        origin,
+        center,
+        fittedHeight,
+        geometry,
+      );
+      if (!bits || (this.lastHitMask && sameHitMask(this.lastHitMask, bits))) return;
+      this.lastHitMask = bits;
+      void publishHitMask(bits).catch(() => {
+        if (this.lastHitMask === bits) this.lastHitMask = null;
+      });
+    } catch {
+      // An older runtime without bounds must not stop the animation.
+      this.hitFailed = true;
+    }
+  }
   dispose(releaseContext = true) {
     if (!this.alive) return;
     this.alive = false;
+    this.lastHitMask = null;
+    clearHitMask();
     this.abort.abort();
     cancelAnimationFrame(this.frame);
     this.frame = 0;

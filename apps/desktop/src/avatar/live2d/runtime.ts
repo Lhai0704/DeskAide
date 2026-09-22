@@ -30,6 +30,10 @@ export interface SDKModel {
   resize(width: number, height: number): void;
   dispose(): void;
   hit(x: number, y: number): string | null;
+  /** Visible part bounds in model space: minX, minY, maxX, maxY. */
+  opaqueBounds(): Float32Array;
+  /** Visible mesh triangles after the model matrix; optional for older local runtimes. */
+  opaqueTriangles?(): Float32Array;
 }
 export interface SDK {
   createModel(

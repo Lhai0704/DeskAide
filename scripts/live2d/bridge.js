@@ -200,6 +200,56 @@ class Model extends CubismUserModel {
         return this.settings.getHitAreaName(i);
     return null;
   }
+  opaqueTriangles() {
+    if (this.dead || !this._model) return new Float32Array();
+    const model = this._model, matrix = this._modelMatrix;
+    // Reuse storage across samples. Topology does not change during animation.
+    if (!this.hitTriangles) {
+      let size = 0;
+      for (let i = 0; i < model.getDrawableCount(); i++)
+        size += model.getDrawableVertexIndices(i).length * 2;
+      this.hitTriangles = new Float32Array(size);
+    }
+    let offset = 0;
+    for (let i = 0; i < model.getDrawableCount(); i++) {
+      if (!model.getDrawableDynamicFlagIsVisible(i) || model.getDrawableOpacity(i) < 0.1)
+        continue;
+      const vertices = model.getDrawableVertices(i);
+      for (const index of model.getDrawableVertexIndices(i)) {
+        this.hitTriangles[offset++] = matrix.transformX(vertices[index * 2]);
+        this.hitTriangles[offset++] = matrix.transformY(vertices[index * 2 + 1]);
+      }
+    }
+    return this.hitTriangles.subarray(0, offset);
+  }
+  opaqueBounds() {
+    if (this.dead || !this._model) return new Float32Array();
+    const model = this._model;
+    const matrix = this._modelMatrix;
+    const boxes = [];
+    const count = model.getDrawableCount();
+    for (let i = 0; i < count; i++) {
+      if (!model.getDrawableDynamicFlagIsVisible(i) || model.getDrawableOpacity(i) < 0.1)
+        continue;
+      const n = model.getDrawableVertexCount(i);
+      if (n < 3) continue;
+      const vertices = model.getDrawableVertices(i);
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (let j = 0; j < n; j++) {
+        const x = matrix.transformX(vertices[j * 2]);
+        const y = matrix.transformY(vertices[j * 2 + 1]);
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+      }
+      if (minX <= maxX && minY <= maxY) boxes.push(minX, minY, maxX, maxY);
+    }
+    return Float32Array.from(boxes);
+  }
   dimensions() {
     return {
       width: this._model.getCanvasWidth(),

@@ -1,5 +1,6 @@
 mod assistant;
 mod avatar;
+mod click_through;
 mod context_commands;
 mod conversation_history;
 mod credentials;
@@ -326,6 +327,7 @@ fn set_avatar_interacting(app: AppHandle, state: State<'_, AppState>, interactin
         .avatar_interacting
         .store(interacting, Ordering::SeqCst);
     if interacting {
+        click_through::capture_for_interaction(&app);
         return;
     }
     // After avatar click/drag, if the assistant stayed open but lost focus,
@@ -580,8 +582,40 @@ fn handle_assistant_blur(app: &AppHandle) {
     });
 }
 
+const DISCRETE_GPU_SWITCH: &str = "--force_high_performance_gpu";
+const WEBVIEW_DEFAULT_ARGUMENTS: &str =
+    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection";
+
+fn webview_browser_arguments(existing: &str) -> String {
+    let mut args = if existing.trim().is_empty() {
+        WEBVIEW_DEFAULT_ARGUMENTS.to_string()
+    } else {
+        existing.trim().to_string()
+    };
+    if !args
+        .split_whitespace()
+        .any(|arg| arg == DISCRETE_GPU_SWITCH)
+    {
+        args.push(' ');
+        args.push_str(DISCRETE_GPU_SWITCH);
+    }
+    args
+}
+
+#[cfg(windows)]
+fn prefer_discrete_gpu() {
+    // WebView2 uses one GPU process for every window. On hybrid graphics it
+    // ignores WebGL powerPreference and stays on the integrated adapter.
+    // WebView2 145+ moves that process when this switch is present.
+    let key = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS";
+    let args = webview_browser_arguments(&std::env::var(key).unwrap_or_default());
+    // SAFETY: still the main thread, before Tauri starts WebView2 or worker threads.
+    unsafe { std::env::set_var(key, args) };
+}
+
 #[cfg(windows)]
 pub fn run() {
+    prefer_discrete_gpu();
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(
@@ -596,6 +630,7 @@ pub fn run() {
         .manage(AppState::new())
         .manage(speech::SpeechState::default())
         .manage(avatar::PresentationState::default())
+        .manage(click_through::ClickThroughState::default())
         .register_uri_scheme_protocol("avatar-local", |ctx, request| {
             let result = avatar::root(ctx.app_handle()).and_then(|root| {
                 avatar::resolve_resource_uri(&root, request.uri().path().trim_start_matches('/'))
@@ -647,6 +682,9 @@ pub fn run() {
             avatar::save_avatar_settings,
             avatar::sample_avatar_cursor,
             avatar::resize_avatar,
+            click_through::set_avatar_hit_mask,
+            click_through::clear_avatar_hit_mask,
+            click_through::set_avatar_passthrough,
             speech::save_speech_settings,
             speech::check_speech_service,
             speech::speech_references,
@@ -702,6 +740,7 @@ pub fn run() {
             set_assistant_expanded(app.handle().clone(), true)?;
             position_assistant(app.handle())?;
             shortcuts::setup(app.handle())?;
+            click_through::start(app.handle().clone());
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -719,6 +758,21 @@ mod tests {
     use super::*;
     use crate::credentials::MemoryCredentialStore;
     use std::collections::BTreeMap;
+    #[test]
+    fn webview_requests_the_discrete_gpu_without_dropping_webview_defaults() {
+        let args = webview_browser_arguments("");
+        assert!(args.contains(WEBVIEW_DEFAULT_ARGUMENTS));
+        assert!(args.contains(DISCRETE_GPU_SWITCH));
+        assert_eq!(
+            webview_browser_arguments(&args)
+                .matches(DISCRETE_GPU_SWITCH)
+                .count(),
+            1
+        );
+        let custom = webview_browser_arguments("--autoplay-policy=no-user-gesture-required");
+        assert!(custom.starts_with("--autoplay-policy=no-user-gesture-required"));
+        assert!(custom.contains(DISCRETE_GPU_SWITCH));
+    }
     #[test]
     fn bootstrap_exposes_key_presence_but_not_key_material() {
         let mut profiles = ProfileCollection::default();

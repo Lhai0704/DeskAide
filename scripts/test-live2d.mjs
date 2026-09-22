@@ -65,6 +65,8 @@ try {
     const { Live2DRenderer } = await import("/src/avatar/live2d/model.ts");
     const { backingStoreScale } = await import("/src/avatar/live2d/frame.ts");
     const { avatarDefaults } = await import("/src/avatar/types.ts");
+    const { fillTriangleHitMask, fillHitMask } =
+      await import("/src/avatar/live2d/passthrough.ts");
     const results = [];
     for (let index = 0; index < 22; index++) {
       const name = index % 2 ? "ren" : "haru";
@@ -93,6 +95,46 @@ try {
       await renderer.load();
       await new Promise((r) => setTimeout(r, index < 2 ? 1800 : 120));
       if (index < 2) {
+        const timings = [];
+        let meshCells = 0,
+          boxCells = 0;
+        const countBits = (bits) =>
+          [...bits].reduce((sum, byte) => {
+            for (; byte; byte &= byte - 1) sum++;
+            return sum;
+          }, 0);
+        for (let sample = 0; sample < 30; sample++) {
+          const start = performance.now();
+          const triangles = renderer.model.opaqueTriangles();
+          const mask = fillTriangleHitMask(
+            { width: 640, height: 900 },
+            { x: 0, y: 0 },
+            { x: 320, y: 900 },
+            1280,
+            triangles,
+          );
+          timings.push(performance.now() - start);
+          meshCells = countBits(mask);
+        }
+        boxCells = countBits(
+          fillHitMask(
+            { width: 640, height: 900 },
+            { x: 0, y: 0 },
+            { x: 320, y: 900 },
+            1280,
+            renderer.model.opaqueBounds(),
+          ),
+        );
+        if (!meshCells || meshCells > boxCells)
+          throw Error("Invalid triangle coverage");
+        timings.sort((a, b) => a - b);
+        const hitMask = {
+          medianMs: timings[15],
+          p95Ms: timings[28],
+          meshCells,
+          boxCells,
+          bytes: 768,
+        };
         renderer.update({ ...input, state: "speaking", speakingLevel: 0.8 });
         await new Promise((r) => setTimeout(r, 100));
         const core = renderer.model.getModel().getModel();
@@ -145,6 +187,7 @@ try {
         renderer.pause(false);
         results.push({
           name,
+          hitMask,
           visible,
           transparent,
           mouth,
